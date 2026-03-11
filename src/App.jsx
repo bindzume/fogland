@@ -182,6 +182,8 @@ export default function App() {
   const [isTeleporting, setIsTeleporting] = useState(false);
   const [showOnlyWiki, setShowOnlyWiki] = useState(false);
   const showOnlyWikiRef = useRef(false);
+  const [landmarkSearchTrigger, setLandmarkSearchTrigger] = useState(0);
+  const [isSearching, setIsSearching] = useState(false);
 
   // Profile States
   const [showProfile, setShowProfile] = useState(false);
@@ -493,6 +495,22 @@ const startAppTracking = async () => {
 
   
 
+  // Search for landmarks — clears caches for current chunk and re-fetches from Overpass
+  const searchLandmarks = useCallback(() => {
+    if (!currentPos || !Array.isArray(currentPos)) return;
+    const [lat, lon] = currentPos;
+    const chunkLat = Math.floor(lat / CHUNK_SIZE) * CHUNK_SIZE;
+    const chunkLon = Math.floor(lon / CHUNK_SIZE) * CHUNK_SIZE;
+    const chunkId = `osm_chunk_${chunkLat.toFixed(3)}_${chunkLon.toFixed(3)}`;
+
+    console.log(`[Landmarks] Manual search triggered — clearing cache for ${chunkId}`);
+    loadedChunksRef.current.delete(chunkId);
+    try { localStorage.removeItem(chunkId); } catch (e) {}
+
+    setIsSearching(true);
+    setLandmarkSearchTrigger(prev => prev + 1);
+  }, [currentPos]);
+
   // 3. Fetch Nearby Landmarks (Chunk Cached + Retry Enabled)
   useEffect(() => {
     if (!currentPos || !Array.isArray(currentPos)) return;
@@ -510,6 +528,7 @@ const startAppTracking = async () => {
       // If we already processed this chunk during this app session, skip!
       if (loadedChunksRef.current.has(chunkId)) {
         console.log(`[Landmarks] Chunk ${chunkId} already loaded this session — skipping`);
+        setIsSearching(false);
         return;
       }
 
@@ -550,6 +569,7 @@ const startAppTracking = async () => {
         if (!dynamicNodes) {
           console.warn('[Landmarks] No active OSM tags configured — skipping fetch');
           setNearbyLandmarks([]);
+          setIsSearching(false);
           return;
         }
 
@@ -579,6 +599,7 @@ const startAppTracking = async () => {
           }
         } catch (err) {
           console.error(`[Landmarks] Overpass fetch failed after all retries:`, err.message);
+          setIsSearching(false);
           return; // Abort processing if fetch failed entirely
         }
       }
@@ -657,10 +678,12 @@ const startAppTracking = async () => {
         // Mark chunk as successfully processed for this session
         loadedChunksRef.current.add(chunkId);
       }
+
+      setIsSearching(false);
     };
 
     loadLandmarks();
-  }, [currentPos, osmTags]);
+  }, [currentPos, osmTags, landmarkSearchTrigger]);
 
 // 4. Collect Nearby Landmarks
   useEffect(() => {
@@ -954,10 +977,11 @@ const startAppTracking = async () => {
           <Navigation size={24} />
         </button>
       )}
-      <BottomControls 
-        gpsActive={gpsActive} setGpsActive={setGpsActive} setShowTeleportModal={setShowTeleportModal} 
-        showOnlyWiki={showOnlyWiki} setShowOnlyWiki={setShowOnlyWiki} manualMove={manualMove} STEP_SIZE={STEP_SIZE} 
-        debugMode={debugMode} 
+      <BottomControls
+        setShowTeleportModal={setShowTeleportModal}
+        showOnlyWiki={showOnlyWiki} setShowOnlyWiki={setShowOnlyWiki} manualMove={manualMove} STEP_SIZE={STEP_SIZE}
+        debugMode={debugMode}
+        onSearchLandmarks={searchLandmarks} isSearching={isSearching}
       />
       <TeleportModal 
         showTeleportModal={showTeleportModal} setShowTeleportModal={setShowTeleportModal} teleportQuery={teleportQuery} 
