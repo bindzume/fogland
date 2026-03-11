@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, Navigation, Crosshair, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Trash2, User, X, Globe, Activity, Backpack, Star, Sparkles, Rocket, Search, Trees, Download, Upload } from 'lucide-react';
+import { MapPin, Navigation, Crosshair, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Trash2, User, X, Globe, Activity, Backpack, Star, Sparkles, Rocket, Search, Trees, Download, Upload, Book } from 'lucide-react';
 
 const BASE_ZOOM = 16;
 const STEP_SIZE = 0.00015; // Roughly 15 meters per D-Pad tap
-const ERASER_WIDTH_KM = 0.020; 
+const ERASER_WIDTH_KM = 0.020;
 const COLLECTION_RADIUS_KM = 0.015; // 15 meters to collect for point landmarks
 const VIEW_HALF_SIZE = 0.01; // roughly 1.1km box trigger
 const CELL_SIZE = 0.0005; // ~55m grid size for tracking boundary exploration
@@ -15,12 +15,12 @@ const FALLBACK_LNG = -121.9780;
 // Helper: Calculate distance between two coords in km safely
 function getDistanceKm(lat1, lon1, lat2, lon2) {
   if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) return 0;
-  const R = 6371; 
+  const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-            Math.cos(lat1 * (Math.PI/180)) * Math.cos(lat2 * (Math.PI/180)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
 
@@ -30,7 +30,7 @@ function calcBBoxAreaKm2(bbox) {
   const [latMin, latMax, lonMin, lonMax] = bbox.map(Number);
   const heightKm = getDistanceKm(latMin, lonMin, latMax, lonMin);
   const widthKm = getDistanceKm(latMin, lonMin, latMin, lonMax);
-  return heightKm * widthKm * 0.7; 
+  return heightKm * widthKm * 0.7;
 }
 
 export default function App() {
@@ -40,11 +40,11 @@ export default function App() {
   const canvasRef = useRef(null);
   const watchIdRef = useRef(null);
   const fileInputRef = useRef(null);
-  
+
   const pathRef = useRef([]);
   const visitedCellsRef = useRef(new Set()); // For tracking area explored in parks
   const lastFetchBoxRef = useRef(null);
-  
+
   const nearbyLandmarksRef = useRef([]);
   const collectedLandmarksRef = useRef([]);
 
@@ -53,11 +53,15 @@ export default function App() {
   const [locationError, setLocationError] = useState('');
   const [gpsActive, setGpsActive] = useState(true);
   const [mapReady, setMapReady] = useState(false);
-  
+
   // Teleport State
   const [showTeleportModal, setShowTeleportModal] = useState(false);
   const [teleportQuery, setTeleportQuery] = useState('');
   const [isTeleporting, setIsTeleporting] = useState(false);
+
+  // NEW: Wiki Filter State
+  const [showOnlyWiki, setShowOnlyWiki] = useState(false);
+  const showOnlyWikiRef = useRef(false);
 
   // Profile & Collectibles State
   const [showProfile, setShowProfile] = useState(false);
@@ -66,7 +70,7 @@ export default function App() {
   const [geoData, setGeoData] = useState(null);
   const [stats, setStats] = useState({ distance: 0, areaKm: 0 });
   const [regionalAreas, setRegionalAreas] = useState({ country: null, state: null, local: null });
-  
+
   const [nearbyLandmarks, setNearbyLandmarks] = useState([]);
   const [collectedLandmarks, setCollectedLandmarks] = useState([]);
   const [justCollected, setJustCollected] = useState(null);
@@ -81,12 +85,12 @@ export default function App() {
         if (Array.isArray(parsed)) {
           pathRef.current = parsed.filter(p => p === null || (Array.isArray(p) && p.length === 2 && !isNaN(p[0]) && !isNaN(p[1])));
           console.log(`[Fog World] Loaded ${pathRef.current.length} path points from storage.`);
-          
+
           // Hydrate visited cells for boundary exploration
           const cells = new Set();
           pathRef.current.forEach(p => {
             if (p && Array.isArray(p) && p.length === 2) {
-              cells.add(`${Math.floor(p[0]/CELL_SIZE)}_${Math.floor(p[1]/CELL_SIZE)}`);
+              cells.add(`${Math.floor(p[0] / CELL_SIZE)}_${Math.floor(p[1] / CELL_SIZE)}`);
             }
           });
           visitedCellsRef.current = cells;
@@ -144,17 +148,19 @@ export default function App() {
         handleNewLocation([position.coords.latitude, position.coords.longitude]);
       },
       (error) => console.warn("[Fog World] GPS Watch error:", error),
-      { enableHighAccuracy: true, distanceFilter: 5 } 
+      { enableHighAccuracy: true, distanceFilter: 5 }
     );
     return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
   }, [gpsActive, isLocating]);
+
+
 
   // Drawing Fog Logic
   const drawFog = useCallback(() => {
     try {
       const canvas = canvasRef.current;
       const map = mapInstanceRef.current;
-      
+
       if (!canvas || !map || !pathRef.current || pathRef.current.length === 0) return;
 
       const ctx = canvas.getContext('2d');
@@ -171,15 +177,15 @@ export default function App() {
 
       const currentZoom = map.getZoom();
       const scale = Math.pow(2, currentZoom - BASE_ZOOM);
-      
-      ctx.lineWidth = 50 * scale; 
+
+      ctx.lineWidth = 50 * scale;
 
       ctx.beginPath();
       let isFirst = true;
-      
+
       for (let i = 0; i < pathRef.current.length; i++) {
         const p = pathRef.current[i];
-        
+
         if (!p || !Array.isArray(p) || p.length !== 2) {
           isFirst = true;
           continue;
@@ -200,15 +206,17 @@ export default function App() {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '28px Arial';
-      
-      const uncollected = nearbyLandmarksRef.current.filter(lm => 
-        !collectedLandmarksRef.current.some(c => c.id === lm.id)
+
+      // NEW: Filter uncollected based on the wiki toggle ref
+      const uncollected = nearbyLandmarksRef.current.filter(lm =>
+        !collectedLandmarksRef.current.some(c => c.id === lm.id) &&
+        (!showOnlyWikiRef.current || lm.wikipedia)
       );
-      
+
       uncollected.forEach(lm => {
         const pt = map.latLngToContainerPoint([lm.lat, lm.lon]);
         if (pt.x > -50 && pt.x < canvas.width + 50 && pt.y > -50 && pt.y < canvas.height + 50) {
-          
+
           if (lm.isBoundary) {
             // Boundary/Park Landmark
             const pct = Math.min(99, Math.floor(((lm.progressCount || 0) / lm.requiredCells) * 100));
@@ -216,7 +224,7 @@ export default function App() {
             ctx.shadowBlur = 20;
             ctx.fillText('⭐', pt.x, pt.y);
             ctx.shadowBlur = 0;
-            
+
             ctx.fillStyle = '#4ade80';
             ctx.font = 'bold 14px Arial';
             ctx.fillText(`${pct}% 🌲`, pt.x, pt.y - 20);
@@ -225,7 +233,7 @@ export default function App() {
             ctx.shadowColor = 'rgba(250, 204, 21, 1)'; // Yellow glow
             ctx.shadowBlur = 20;
             ctx.fillText('⭐', pt.x, pt.y);
-            ctx.shadowBlur = 0; 
+            ctx.shadowBlur = 0;
           }
         }
       });
@@ -234,34 +242,40 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => { 
-    nearbyLandmarksRef.current = nearbyLandmarks; 
-    drawFog(); 
+    // Sync ref and trigger a map redraw when the wiki filter changes
+  useEffect(() => {
+    showOnlyWikiRef.current = showOnlyWiki;
+    drawFog();
+  }, [showOnlyWiki, drawFog]);
+
+  useEffect(() => {
+    nearbyLandmarksRef.current = nearbyLandmarks;
+    drawFog();
   }, [nearbyLandmarks, drawFog]);
-  
-  useEffect(() => { 
-    collectedLandmarksRef.current = collectedLandmarks; 
-    drawFog(); 
+
+  useEffect(() => {
+    collectedLandmarksRef.current = collectedLandmarks;
+    drawFog();
   }, [collectedLandmarks, drawFog]);
 
   // Handle Location Updates
   const handleNewLocation = useCallback((newPos) => {
     try {
       if (!Array.isArray(newPos) || newPos.length !== 2) return;
-      
+
       setCurrentPos(newPos);
-      
+
       const updatedPath = [...pathRef.current, newPos];
       pathRef.current = updatedPath;
-      
+
       try {
         localStorage.setItem('fogWorldLivePath', JSON.stringify(updatedPath));
-      } catch (storageErr) {}
+      } catch (storageErr) { }
 
       // Track cell visited for boundary coverage
-      const cellId = `${Math.floor(newPos[0]/CELL_SIZE)}_${Math.floor(newPos[1]/CELL_SIZE)}`;
+      const cellId = `${Math.floor(newPos[0] / CELL_SIZE)}_${Math.floor(newPos[1] / CELL_SIZE)}`;
       let newlyExploredCell = false;
-      
+
       if (!visitedCellsRef.current.has(cellId)) {
         visitedCellsRef.current.add(cellId);
         newlyExploredCell = true;
@@ -275,9 +289,9 @@ export default function App() {
           const next = prev.map(lm => {
             if (lm.isBoundary && !collectedLandmarksRef.current.some(c => c.id === lm.id)) {
               // Direct coordinates check against bounding box handles negatives better than snapped grids
-              if (newPos[0] >= lm.bounds.minlat && newPos[0] <= lm.bounds.maxlat && 
-                  newPos[1] >= lm.bounds.minlon && newPos[1] <= lm.bounds.maxlon) {
-                
+              if (newPos[0] >= lm.bounds.minlat && newPos[0] <= lm.bounds.maxlat &&
+                newPos[1] >= lm.bounds.minlon && newPos[1] <= lm.bounds.maxlon) {
+
                 updated = true;
                 const newCount = (lm.progressCount || 0) + 1;
                 console.log(`[Fog World] Boundary Progress on '${lm.name}': ${newCount} / ${lm.requiredCells} cells`);
@@ -302,16 +316,16 @@ export default function App() {
   // 3. Fetch Nearby Landmarks
   useEffect(() => {
     if (!currentPos || !Array.isArray(currentPos)) return;
-    
-    const needsFetch = !lastFetchBoxRef.current || 
-                       currentPos[0] < lastFetchBoxRef.current.minLat || 
-                       currentPos[0] > lastFetchBoxRef.current.maxLat || 
-                       currentPos[1] < lastFetchBoxRef.current.minLon || 
-                       currentPos[1] > lastFetchBoxRef.current.maxLon;
+
+    const needsFetch = !lastFetchBoxRef.current ||
+      currentPos[0] < lastFetchBoxRef.current.minLat ||
+      currentPos[0] > lastFetchBoxRef.current.maxLat ||
+      currentPos[1] < lastFetchBoxRef.current.minLon ||
+      currentPos[1] > lastFetchBoxRef.current.maxLon;
 
     if (needsFetch) {
       const [lat, lon] = currentPos;
-      
+
       lastFetchBoxRef.current = {
         minLat: lat - VIEW_HALF_SIZE, maxLat: lat + VIEW_HALF_SIZE,
         minLon: lon - VIEW_HALF_SIZE, maxLon: lon + VIEW_HALF_SIZE
@@ -332,7 +346,7 @@ export default function App() {
   nwr["leisure"~"park|nature_reserve|water_park|garden|stadium|marina"](${fetchMinLat},${fetchMinLon},${fetchMaxLat},${fetchMaxLon});
   nwr["boundary"~"protected_area|national_park"](${fetchMinLat},${fetchMinLon},${fetchMaxLat},${fetchMaxLon});
 );
-out center bb;`; 
+out center bb;`;
 
       console.log(`[Fog World] Fetching Overpass data. Box: ${fetchMinLat},${fetchMinLon} to ${fetchMaxLat},${fetchMaxLon}`);
 
@@ -345,16 +359,16 @@ out center bb;`;
         .then(data => {
           if (data && data.elements) {
             console.log(`[Fog World] Overpass returned ${data.elements.length} raw elements.`);
-            
+
             const items = data.elements
               .filter(e => {
                 if (!e.tags || !e.tags.name) return false;
                 return true;
-              }) 
+              })
               .map(e => {
                 const isBoundaryType = e.tags.leisure || e.tags.boundary || (e.tags.historic && e.bounds);
                 const isBoundary = isBoundaryType && !!e.bounds;
-                
+
                 let progressCount = 0;
                 let requiredCells = 0;
 
@@ -362,16 +376,16 @@ out center bb;`;
                   const widthCells = Math.abs(e.bounds.maxlon - e.bounds.minlon) / CELL_SIZE;
                   const heightCells = Math.abs(e.bounds.maxlat - e.bounds.minlat) / CELL_SIZE;
                   const bboxAreaCells = widthCells * heightCells;
-                  
+
                   requiredCells = Math.max(3, Math.min(100, Math.floor(bboxAreaCells * MIN_EXPLORE_PERCENT)));
 
                   for (let c of visitedCellsRef.current) {
                     const [cLatStr, cLonStr] = c.split('_');
                     const centerLat = (parseInt(cLatStr) + 0.5) * CELL_SIZE;
                     const centerLon = (parseInt(cLonStr) + 0.5) * CELL_SIZE;
-                    
-                    if (centerLat >= e.bounds.minlat && centerLat <= e.bounds.maxlat && 
-                        centerLon >= e.bounds.minlon && centerLon <= e.bounds.maxlon) {
+
+                    if (centerLat >= e.bounds.minlat && centerLat <= e.bounds.maxlat &&
+                      centerLon >= e.bounds.minlon && centerLon <= e.bounds.maxlon) {
                       progressCount++;
                     }
                   }
@@ -381,37 +395,62 @@ out center bb;`;
                 // We must calculate the mathematical center of the bounding box if the center is missing!
                 let computedLat = e.lat || (e.center && e.center.lat);
                 let computedLon = e.lon || (e.center && e.center.lon);
-                
+
                 if (computedLat == null && e.bounds) {
-                    computedLat = (e.bounds.minlat + e.bounds.maxlat) / 2;
+                  computedLat = (e.bounds.minlat + e.bounds.maxlat) / 2;
                 }
                 if (computedLon == null && e.bounds) {
-                    computedLon = (e.bounds.minlon + e.bounds.maxlon) / 2;
+                  computedLon = (e.bounds.minlon + e.bounds.maxlon) / 2;
                 }
 
-                const lm = { 
-                  id: e.id, 
-                  name: e.tags.name, 
-                  lat: computedLat, 
+                // Find the specific type from OSM tags
+                let rawType = 'Landmark';
+                if (e.tags.natural) rawType = e.tags.natural;
+                else if (e.tags.historic) rawType = e.tags.historic;
+                else if (e.tags.man_made) rawType = e.tags.man_made;
+                else if (e.tags.tourism) rawType = e.tags.tourism;
+                else if (e.tags.amenity) rawType = e.tags.amenity;
+                else if (e.tags.leisure) rawType = e.tags.leisure;
+                else if (e.tags.boundary) rawType = e.tags.boundary;
+
+                // Format it nicely (e.g., "cave_entrance" -> "Cave Entrance")
+                const specificType = rawType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+                // Format Wikipedia Link (OSM usually formats this as "en:Article_Name")
+                let wikiLink = null;
+                if (e.tags.wikipedia) {
+                  const parts = e.tags.wikipedia.split(':');
+                  if (parts.length === 2) {
+                    wikiLink = `https://${parts[0]}.wikipedia.org/wiki/${encodeURIComponent(parts[1])}`;
+                  }
+                }
+
+                const lm = {
+                  id: e.id,
+                  name: e.tags.name,
+                  lat: computedLat,
                   lon: computedLon,
-                  type: isBoundaryType ? 'park/boundary' : (e.tags.natural ? 'natural' : e.tags.historic ? 'historic' : e.tags.amenity ? 'amenity' : 'tourism'),
+                  type: isBoundaryType ? 'park/boundary' : 'point', // Keeping this simple for your existing logic
+                  specificType: specificType, // NEW: The exact type (Tower, Peak, etc.)
+                  description: e.tags.description || null, // NEW: Brief description
+                  wikipedia: wikiLink, // NEW: Wikipedia URL
                   isBoundary,
                   bounds: e.bounds,
                   progressCount,
                   requiredCells,
                 };
-                
+
                 if (isBoundary) {
-                   console.log(`[Fog World] Boundary Identified: '${lm.name}' | Center Coord assigned: ${computedLat}, ${computedLon}`);
+                  console.log(`[Fog World] Boundary Identified: '${lm.name}' | Center Coord assigned: ${computedLat}, ${computedLon}`);
                 }
-                
+
                 return lm;
               })
               // Now that we fallback to the bounding box center, this filter won't accidentally delete parks!
               .filter(e => e.lat != null && e.lon != null);
-            
+
             console.log(`[Fog World] Processed ${items.length} valid named landmarks in area.`);
-            
+
             setNearbyLandmarks(prev => {
               const map = new Map();
               prev.forEach(lm => {
@@ -432,7 +471,7 @@ out center bb;`;
 
     nearbyLandmarks.forEach(async (lm) => {
       if (collectedLandmarks.some(c => c.id === lm.id)) return;
-      
+
       let shouldCollect = false;
 
       if (lm.isBoundary) {
@@ -443,8 +482,8 @@ out center bb;`;
       } else {
         const dist = getDistanceKm(currentPos[0], currentPos[1], lm.lat, lm.lon);
         if (dist < COLLECTION_RADIUS_KM) {
-           console.log(`[Fog World] Collecting Point '${lm.name}' (Distance: ${dist.toFixed(4)}km < ${COLLECTION_RADIUS_KM}km)`);
-           shouldCollect = true;
+          console.log(`[Fog World] Collecting Point '${lm.name}' (Distance: ${dist.toFixed(4)}km < ${COLLECTION_RADIUS_KM}km)`);
+          shouldCollect = true;
         }
       }
 
@@ -452,10 +491,10 @@ out center bb;`;
         const partial = { ...lm, country: 'Discovering...', state: '...', city: '...', date: Date.now() };
         setCollectedLandmarks(prev => {
           const newBag = [...prev, partial];
-          try { localStorage.setItem('fogWorldCollected', JSON.stringify(newBag)); } catch(e) {}
+          try { localStorage.setItem('fogWorldCollected', JSON.stringify(newBag)); } catch (e) { }
           return newBag;
         });
-        
+
         setJustCollected(lm.name);
         setTimeout(() => setJustCollected(null), 4000);
 
@@ -470,11 +509,11 @@ out center bb;`;
                 state: data.address.state || 'Unknown',
                 city: data.address.city || data.address.town || data.address.village || data.address.county || 'Unknown'
               } : p);
-              try { localStorage.setItem('fogWorldCollected', JSON.stringify(updated)); } catch(e) {}
+              try { localStorage.setItem('fogWorldCollected', JSON.stringify(updated)); } catch (e) { }
               return updated;
             });
           }
-        } catch(e) { console.warn("[Fog World] Reverse geocode failed for collected item:", e); }
+        } catch (e) { console.warn("[Fog World] Reverse geocode failed for collected item:", e); }
       }
     });
   }, [currentPos, nearbyLandmarks, collectedLandmarks]);
@@ -483,24 +522,24 @@ out center bb;`;
   useEffect(() => {
     if (isLocating || mapInstanceRef.current || !currentPos) return;
     let isMounted = true;
-    
+
     console.log("[Fog World] Initializing Leaflet map at:", currentPos);
     const initMap = async () => {
       try {
         if (!window.L) {
           const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'; document.head.appendChild(link);
           await new Promise((resolve) => {
-            const script = document.createElement('script'); 
-            script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'; 
-            script.crossOrigin = 'anonymous'; 
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+            script.crossOrigin = 'anonymous';
             script.onload = resolve;
-            script.onerror = resolve; 
+            script.onerror = resolve;
             document.head.appendChild(script);
           });
         }
-        
+
         if (!isMounted || mapInstanceRef.current || !window.L) return;
-        
+
         const map = window.L.map(mapContainerRef.current, { zoomControl: false, attributionControl: false, doubleClickZoom: false }).setView(currentPos, BASE_ZOOM);
         window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
@@ -509,10 +548,10 @@ out center bb;`;
           html: `<div style="background-color: #3b82f6; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>`,
           iconSize: [16, 16], iconAnchor: [8, 8]
         });
-        
+
         markerRef.current = window.L.marker(currentPos, { icon: userIcon }).addTo(map);
         mapInstanceRef.current = map;
-        setMapReady(true); 
+        setMapReady(true);
 
         map.on('move', drawFog); map.on('zoom', drawFog); window.addEventListener('resize', drawFog);
 
@@ -522,7 +561,7 @@ out center bb;`;
           const newPos = [e.latlng.lat, e.latlng.lng];
           const updatedPath = [...pathRef.current, null, newPos];
           pathRef.current = updatedPath;
-          try { localStorage.setItem('fogWorldLivePath', JSON.stringify(updatedPath)); } catch(err) {}
+          try { localStorage.setItem('fogWorldLivePath', JSON.stringify(updatedPath)); } catch (err) { }
           handleNewLocation(newPos);
         });
 
@@ -532,12 +571,12 @@ out center bb;`;
       }
     };
     initMap();
-    
-    return () => { 
-      isMounted = false; 
-      window.removeEventListener('resize', drawFog); 
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('resize', drawFog);
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove(); 
+        mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
         setMapReady(false);
       }
@@ -547,7 +586,7 @@ out center bb;`;
   // Controls
   const manualMove = (latOffset, lngOffset) => {
     if (!currentPos || !Array.isArray(currentPos)) return;
-    setGpsActive(false); 
+    setGpsActive(false);
     handleNewLocation([currentPos[0] + latOffset, currentPos[1] + lngOffset]);
   };
 
@@ -584,34 +623,34 @@ out center bb;`;
   const handleImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    
+
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const data = JSON.parse(event.target.result);
-        
+
         // Restore Path
         if (data.path && Array.isArray(data.path)) {
           pathRef.current = data.path;
           localStorage.setItem('fogWorldLivePath', JSON.stringify(data.path));
-          
+
           // Re-hydrate explored grid cells
           const cells = new Set();
           data.path.forEach(p => {
             if (p && Array.isArray(p) && p.length === 2) {
-              cells.add(`${Math.floor(p[0]/CELL_SIZE)}_${Math.floor(p[1]/CELL_SIZE)}`);
+              cells.add(`${Math.floor(p[0] / CELL_SIZE)}_${Math.floor(p[1] / CELL_SIZE)}`);
             }
           });
           visitedCellsRef.current = cells;
         }
-        
+
         // Restore Bag
         if (data.collected && Array.isArray(data.collected)) {
           setCollectedLandmarks(data.collected);
           collectedLandmarksRef.current = data.collected;
           localStorage.setItem('fogWorldCollected', JSON.stringify(data.collected));
         }
-        
+
         drawFog();
         alert("Save file imported successfully!");
       } catch (err) {
@@ -629,42 +668,42 @@ out center bb;`;
     setIsTeleporting(true);
     console.log(`[Fog World] Attempting teleport to: ${teleportQuery}`);
     try {
-        let lat, lon;
-        const query = teleportQuery.trim();
-        const coords = query.split(',').map(s => s.trim());
+      let lat, lon;
+      const query = teleportQuery.trim();
+      const coords = query.split(',').map(s => s.trim());
 
-        if (coords.length === 2 && !isNaN(coords[0]) && !isNaN(coords[1])) {
-            lat = parseFloat(coords[0]);
-            lon = parseFloat(coords[1]);
+      if (coords.length === 2 && !isNaN(coords[0]) && !isNaN(coords[1])) {
+        lat = parseFloat(coords[0]);
+        lon = parseFloat(coords[1]);
+      } else {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`);
+        const data = await res.json();
+        if (data && data.length > 0) {
+          lat = parseFloat(data[0].lat);
+          lon = parseFloat(data[0].lon);
+          console.log(`[Fog World] Teleport geocode success: ${data[0].display_name}`);
         } else {
-            const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`);
-            const data = await res.json();
-            if (data && data.length > 0) {
-                lat = parseFloat(data[0].lat);
-                lon = parseFloat(data[0].lon);
-                console.log(`[Fog World] Teleport geocode success: ${data[0].display_name}`);
-            } else {
-                alert("Location not found! Try a known city name.");
-                setIsTeleporting(false);
-                return;
-            }
+          alert("Location not found! Try a known city name.");
+          setIsTeleporting(false);
+          return;
         }
+      }
 
-        setGpsActive(false);
-        const newPos = [lat, lon];
-        
-        const updatedPath = [...pathRef.current, null, newPos];
-        pathRef.current = updatedPath;
-        try { localStorage.setItem('fogWorldLivePath', JSON.stringify(updatedPath)); } catch(e) {}
+      setGpsActive(false);
+      const newPos = [lat, lon];
 
-        handleNewLocation(newPos);
-        if (mapInstanceRef.current) mapInstanceRef.current.setView(newPos, mapInstanceRef.current.getZoom(), { animate: false });
+      const updatedPath = [...pathRef.current, null, newPos];
+      pathRef.current = updatedPath;
+      try { localStorage.setItem('fogWorldLivePath', JSON.stringify(updatedPath)); } catch (e) { }
 
-        setShowTeleportModal(false);
-        setTeleportQuery('');
+      handleNewLocation(newPos);
+      if (mapInstanceRef.current) mapInstanceRef.current.setView(newPos, mapInstanceRef.current.getZoom(), { animate: false });
+
+      setShowTeleportModal(false);
+      setTeleportQuery('');
     } catch (e) {
-        console.warn("[Fog World] Teleportation failed:", e);
-        alert("Teleportation failed.");
+      console.warn("[Fog World] Teleportation failed:", e);
+      alert("Teleportation failed.");
     }
     setIsTeleporting(false);
   };
@@ -675,19 +714,19 @@ out center bb;`;
       const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`);
       const data = await res.json();
       if (data && data[0] && data[0].boundingbox) return calcBBoxAreaKm2(data[0].boundingbox);
-    } catch (e) {} return null;
+    } catch (e) { } return null;
   };
 
   const openProfile = async () => {
     console.log("[Fog World] Opening Profile...");
     setShowProfile(true);
     setRegionalAreas({ country: null, state: null, local: null });
-    
+
     let totalDistKm = 0;
     const path = pathRef.current || [];
     for (let i = 1; i < path.length; i++) {
-      if (path[i-1] && path[i] && Array.isArray(path[i-1]) && Array.isArray(path[i])) {
-        totalDistKm += getDistanceKm(path[i-1][0], path[i-1][1], path[i][0], path[i][1]);
+      if (path[i - 1] && path[i] && Array.isArray(path[i - 1]) && Array.isArray(path[i])) {
+        totalDistKm += getDistanceKm(path[i - 1][0], path[i - 1][1], path[i][0], path[i][1]);
       }
     }
     setStats({ distance: totalDistKm, areaKm: totalDistKm * ERASER_WIDTH_KM });
@@ -709,7 +748,7 @@ out center bb;`;
         const cRes = await fetch(`https://restcountries.com/v3.1/name/${country}?fullText=true`);
         const cData = await cRes.json();
         if (cData && cData[0] && cData[0].area) setRegionalAreas(prev => ({ ...prev, country: cData[0].area }));
-      } catch (e) {}
+      } catch (e) { }
     }
     if (state) {
       const sArea = await fetchBBoxArea(`${state}, ${country}`);
@@ -723,7 +762,12 @@ out center bb;`;
     }
   };
 
-  const groupedBag = Array.isArray(collectedLandmarks) ? collectedLandmarks.reduce((acc, lm) => {
+  // NEW: Filter collected list before rendering bag
+  const visibleCollected = showOnlyWiki 
+    ? (collectedLandmarks || []).filter(lm => lm.wikipedia) 
+    : (collectedLandmarks || []);
+
+  const groupedBag = Array.isArray(visibleCollected) ? visibleCollected.reduce((acc, lm) => {
     const country = lm.country || 'Unknown';
     const state = lm.state || 'Unknown';
     const city = lm.city || 'Unknown';
@@ -745,7 +789,7 @@ out center bb;`;
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-slate-900 font-sans">
-      
+
       {/* Toast Notification */}
       {justCollected && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 animate-bounce pointer-events-none">
@@ -762,9 +806,9 @@ out center bb;`;
       {/* Top Status */}
       <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-start pointer-events-none">
         <div className="bg-white/95 backdrop-blur-xl p-3 rounded-2xl shadow-xl border border-slate-100 pointer-events-auto">
-          <h1 className="text-md font-bold text-slate-800 flex items-center gap-2">
+          <h3 className="text-md font-bold text-slate-800 flex items-center gap-2">
             <MapPin className="text-blue-500" size={16} /> Fog World
-          </h1>
+          </h3>
           {locationError && <p className="text-[10px] text-red-500 mt-1">{locationError}</p>}
         </div>
         <div className="pointer-events-auto">
@@ -776,14 +820,19 @@ out center bb;`;
 
       {/* Bottom Controls */}
       <div className="absolute bottom-6 left-4 right-4 z-20 flex justify-between items-end pointer-events-none">
-        
+
         <div className="pointer-events-auto bg-white/95 backdrop-blur-xl p-3 rounded-3xl shadow-2xl border border-slate-100 flex flex-col gap-2">
           <button onClick={() => setGpsActive(!gpsActive)} className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl font-semibold transition-all active:scale-95 ${gpsActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'bg-slate-100 text-slate-600'}`}>
             <Crosshair size={18} className={gpsActive ? "animate-pulse" : ""} /> {gpsActive ? "Live GPS" : "GPS Off"}
           </button>
-          
+
           <button onClick={() => setShowTeleportModal(true)} className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold transition-all active:scale-95 bg-purple-100 text-purple-700 hover:bg-purple-200">
             <Rocket size={18} /> Teleport
+          </button>
+
+          {/* NEW: Wiki Filter Toggle */}
+          <button onClick={() => setShowOnlyWiki(!showOnlyWiki)} className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold transition-all active:scale-95 ${showOnlyWiki ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+            <Book size={18} /> {showOnlyWiki ? "Wiki Only" : "All Sites"}
           </button>
         </div>
 
@@ -807,18 +856,18 @@ out center bb;`;
               <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                 <Rocket className="text-purple-500" /> Jump to Location
               </h3>
-              <button onClick={() => setShowTeleportModal(false)} className="text-slate-400 hover:text-slate-700"><X size={20}/></button>
+              <button onClick={() => setShowTeleportModal(false)} className="text-slate-400 hover:text-slate-700"><X size={20} /></button>
             </div>
-            
+
             <p className="text-sm text-slate-500 mb-4">
               Enter a city name or coordinates (Lat, Lng) to drop instantly.
             </p>
-            
+
             <div className="relative mb-6">
               <Search className="absolute left-3 top-3 text-slate-400" size={18} />
-              <input 
-                type="text" 
-                placeholder="e.g., Tokyo, or 35.68, 139.69" 
+              <input
+                type="text"
+                placeholder="e.g., Tokyo, or 35.68, 139.69"
                 className="w-full bg-slate-100 border-none rounded-xl py-3 pl-10 pr-4 text-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
                 value={teleportQuery}
                 onChange={(e) => setTeleportQuery(e.target.value)}
@@ -826,9 +875,9 @@ out center bb;`;
                 autoFocus
               />
             </div>
-            
-            <button 
-              onClick={executeTeleport} 
+
+            <button
+              onClick={executeTeleport}
               disabled={isTeleporting || !teleportQuery.trim()}
               className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 transition-colors"
             >
@@ -841,13 +890,13 @@ out center bb;`;
       {/* PROFILE OVERLAY */}
       {showProfile && (
         <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur-md overflow-y-auto">
-          
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={handleImport} 
-            accept=".json" 
-            className="hidden" 
+
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleImport}
+            accept=".json"
+            className="hidden"
           />
 
           {/* CONFIRMATION MODAL */}
@@ -870,21 +919,21 @@ out center bb;`;
                 <User className="text-blue-400" /> Profile
               </h2>
               <div className="flex gap-4 items-center">
-                 <button onClick={handleExport} title="Export Save" className="p-2 text-slate-400 hover:text-blue-400 transition-colors"><Download size={20} /></button>
-                 <button onClick={() => fileInputRef.current?.click()} title="Import Save" className="p-2 text-slate-400 hover:text-green-400 transition-colors"><Upload size={20} /></button>
-                 <button onClick={() => setShowConfirmWipe(true)} title="Wipe Data" className="p-2 text-slate-400 hover:text-red-400 transition-colors"><Trash2 size={20} /></button>
-                 <div className="w-px h-6 bg-slate-700 mx-1"></div>
-                 <button onClick={() => setShowProfile(false)} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors"><X size={20} /></button>
+                <button onClick={handleExport} title="Export Save" className="p-2 text-slate-400 hover:text-blue-400 transition-colors"><Download size={20} /></button>
+                <button onClick={() => fileInputRef.current?.click()} title="Import Save" className="p-2 text-slate-400 hover:text-green-400 transition-colors"><Upload size={20} /></button>
+                <button onClick={() => setShowConfirmWipe(true)} title="Wipe Data" className="p-2 text-slate-400 hover:text-red-400 transition-colors"><Trash2 size={20} /></button>
+                <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                <button onClick={() => setShowProfile(false)} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors"><X size={20} /></button>
               </div>
             </div>
 
             {/* TABS */}
             <div className="flex gap-2 mb-6 bg-slate-800 p-1 rounded-xl">
               <button onClick={() => setActiveTab('stats')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'stats' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                <Activity size={16}/> Map Stats
+                <Activity size={16} /> Map Stats
               </button>
               <button onClick={() => setActiveTab('bag')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'bag' ? 'bg-yellow-500 text-slate-900 shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                <Backpack size={16}/> Landmarks Bag ({Array.isArray(collectedLandmarks) ? collectedLandmarks.length : 0})
+                <Backpack size={16} /> Landmarks Bag ({Array.isArray(visibleCollected) ? visibleCollected.length : 0})
               </button>
             </div>
 
@@ -932,22 +981,22 @@ out center bb;`;
             {/* TAB: BAG */}
             {activeTab === 'bag' && (
               <div className="bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700 min-h-[400px]">
-                {!collectedLandmarks || collectedLandmarks.length === 0 ? (
+                {!visibleCollected || visibleCollected.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-slate-500 pt-10">
                     <Backpack size={48} className="mb-4 opacity-50" />
-                    <p className="text-center">Your bag is empty.</p>
+                    <p className="text-center">{showOnlyWiki ? "No Wikipedia sites found yet." : "Your bag is empty."}</p>
                     <p className="text-sm text-center mt-2">Explore the map to find glowing ⭐ landmarks hiding in the fog!</p>
                   </div>
                 ) : (
                   <div className="space-y-6">
                     {Object.entries(groupedBag).map(([country, states]) => (
                       <div key={country} className="border-l-4 border-yellow-500 pl-4 py-1">
-                        <h3 className="text-xl font-bold text-yellow-400 mb-3 flex items-center gap-2"><Globe size={18}/> {country}</h3>
-                        
+                        <h3 className="text-xl font-bold text-yellow-400 mb-3 flex items-center gap-2"><Globe size={18} /> {country}</h3>
+
                         {Object.entries(states).map(([state, cities]) => (
                           <div key={state} className="ml-2 mb-4">
                             <h4 className="text-md font-semibold text-slate-300 mb-2">{state}</h4>
-                            
+
                             {Object.entries(cities).map(([city, lms]) => (
                               <div key={city} className="ml-3 mt-1 pl-3 border-l-2 border-slate-700 mb-3">
                                 <h5 className="text-sm font-bold text-slate-500 mb-2 uppercase tracking-wider">{city}</h5>
@@ -955,19 +1004,33 @@ out center bb;`;
                                   {lms.map(lm => (
                                     <div key={lm.id} className="flex items-center gap-3 text-white bg-slate-900/80 p-3 rounded-xl border border-slate-700 shadow-sm">
                                       <div className={`p-2 rounded-lg ${lm.type === 'park/boundary' ? 'bg-green-500/20' : 'bg-yellow-500/20'}`}>
-                                        {lm.type === 'park/boundary' ? 
-                                          <Trees size={16} className="text-green-400" /> : 
+                                        {lm.type === 'park/boundary' ?
+                                          <Trees size={16} className="text-green-400" /> :
                                           <Star size={16} className="text-yellow-400 fill-yellow-400" />
                                         }
                                       </div>
-                                      <div>
+                                      <div className="w-full">
                                         <div className="font-semibold text-sm flex items-center gap-2">
                                           {lm.name}
                                           <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase tracking-widest ${lm.type === 'park/boundary' ? 'bg-green-900 text-green-300' : 'bg-slate-700 text-slate-300'}`}>
-                                            {lm.type}
+                                            {lm.specificType || lm.type}
                                           </span>
                                         </div>
-                                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">Found: {new Date(lm.date).toLocaleDateString()}</div>
+                                        <div className="text-[10px] text-slate-500 font-mono mt-0.5 mb-1">
+                                          Found: {new Date(lm.date).toLocaleDateString()}
+                                        </div>
+
+                                        {/* New Details Section */}
+                                        {(lm.description || lm.wikipedia) && (
+                                          <div className="mt-2 text-xs text-slate-400 border-t border-slate-700/50 pt-2 space-y-1">
+                                            {lm.description && <p className="italic text-slate-300">"{lm.description}"</p>}
+                                            {lm.wikipedia && (
+                                              <a href={lm.wikipedia} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors">
+                                                <Globe size={10} /> Read on Wikipedia
+                                              </a>
+                                            )}
+                                          </div>
+                                        )}
                                       </div>
                                     </div>
                                   ))}
