@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MapPin, Navigation, Crosshair, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Trash2, User, X, Globe, Activity, Backpack, Star, Sparkles, Rocket, Search, Trees, Download, Upload, Book } from 'lucide-react';
+import { Navigation, Sparkles } from 'lucide-react';
+
+// Extracted UI Components
+import TopStatus from './components/TopStatus';
+import BottomControls from './components/BottomControls';
+import TeleportModal from './components/TeleportModal';
+import ProfileOverlay from './components/ProfileOverlay';
 
 const BASE_ZOOM = 16;
 const STEP_SIZE = 0.00015; // Roughly 15 meters per D-Pad tap
@@ -59,7 +65,7 @@ export default function App() {
   const [teleportQuery, setTeleportQuery] = useState('');
   const [isTeleporting, setIsTeleporting] = useState(false);
 
-  // NEW: Wiki Filter State
+  // Wiki Filter State
   const [showOnlyWiki, setShowOnlyWiki] = useState(false);
   const showOnlyWikiRef = useRef(false);
 
@@ -154,7 +160,6 @@ export default function App() {
   }, [gpsActive, isLocating]);
 
 
-
   // Drawing Fog Logic
   const drawFog = useCallback(() => {
     try {
@@ -207,7 +212,7 @@ export default function App() {
       ctx.textBaseline = 'middle';
       ctx.font = '28px Arial';
 
-      // NEW: Filter uncollected based on the wiki toggle ref
+      // Filter uncollected based on the wiki toggle ref
       const uncollected = nearbyLandmarksRef.current.filter(lm =>
         !collectedLandmarksRef.current.some(c => c.id === lm.id) &&
         (!showOnlyWikiRef.current || lm.wikipedia)
@@ -242,12 +247,12 @@ export default function App() {
     }
   }, []);
 
-    // Sync ref and trigger a map redraw when the wiki filter changes
+  // Sync ref and trigger a map redraw when the wiki filter changes
   useEffect(() => {
     showOnlyWikiRef.current = showOnlyWiki;
     drawFog();
   }, [showOnlyWiki, drawFog]);
-
+  
   useEffect(() => {
     nearbyLandmarksRef.current = nearbyLandmarks;
     drawFog();
@@ -391,8 +396,7 @@ out center bb;`;
                   }
                 }
 
-                // CRITICAL FIX: Sometimes Overpass doesn't return a "center" node for complex relations/polygons.
-                // We must calculate the mathematical center of the bounding box if the center is missing!
+                // Calculate the mathematical center of the bounding box if the center is missing
                 let computedLat = e.lat || (e.center && e.center.lat);
                 let computedLon = e.lon || (e.center && e.center.lon);
 
@@ -413,10 +417,10 @@ out center bb;`;
                 else if (e.tags.leisure) rawType = e.tags.leisure;
                 else if (e.tags.boundary) rawType = e.tags.boundary;
 
-                // Format it nicely (e.g., "cave_entrance" -> "Cave Entrance")
+                // Format it nicely
                 const specificType = rawType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
-                // Format Wikipedia Link (OSM usually formats this as "en:Article_Name")
+                // Format Wikipedia Link
                 let wikiLink = null;
                 if (e.tags.wikipedia) {
                   const parts = e.tags.wikipedia.split(':');
@@ -430,26 +434,19 @@ out center bb;`;
                   name: e.tags.name,
                   lat: computedLat,
                   lon: computedLon,
-                  type: isBoundaryType ? 'park/boundary' : 'point', // Keeping this simple for your existing logic
-                  specificType: specificType, // NEW: The exact type (Tower, Peak, etc.)
-                  description: e.tags.description || null, // NEW: Brief description
-                  wikipedia: wikiLink, // NEW: Wikipedia URL
+                  type: isBoundaryType ? 'park/boundary' : 'point',
+                  specificType: specificType, 
+                  description: e.tags.description || null, 
+                  wikipedia: wikiLink, 
                   isBoundary,
                   bounds: e.bounds,
                   progressCount,
                   requiredCells,
                 };
 
-                if (isBoundary) {
-                  console.log(`[Fog World] Boundary Identified: '${lm.name}' | Center Coord assigned: ${computedLat}, ${computedLon}`);
-                }
-
                 return lm;
               })
-              // Now that we fallback to the bounding box center, this filter won't accidentally delete parks!
               .filter(e => e.lat != null && e.lon != null);
-
-            console.log(`[Fog World] Processed ${items.length} valid named landmarks in area.`);
 
             setNearbyLandmarks(prev => {
               const map = new Map();
@@ -476,13 +473,13 @@ out center bb;`;
 
       if (lm.isBoundary) {
         if (lm.progressCount >= lm.requiredCells) {
-          console.log(`[Fog World] Collecting Boundary '${lm.name}' (Progress met: ${lm.progressCount} >= ${lm.requiredCells})`);
+          console.log(`[Fog World] Collecting Boundary '${lm.name}'`);
           shouldCollect = true;
         }
       } else {
         const dist = getDistanceKm(currentPos[0], currentPos[1], lm.lat, lm.lon);
         if (dist < COLLECTION_RADIUS_KM) {
-          console.log(`[Fog World] Collecting Point '${lm.name}' (Distance: ${dist.toFixed(4)}km < ${COLLECTION_RADIUS_KM}km)`);
+          console.log(`[Fog World] Collecting Point '${lm.name}'`);
           shouldCollect = true;
         }
       }
@@ -556,7 +553,6 @@ out center bb;`;
         map.on('move', drawFog); map.on('zoom', drawFog); window.addEventListener('resize', drawFog);
 
         map.on('dblclick', (e) => {
-          console.log("[Fog World] Double click teleport to:", e.latlng.lat, e.latlng.lng);
           setGpsActive(false);
           const newPos = [e.latlng.lat, e.latlng.lng];
           const updatedPath = [...pathRef.current, null, newPos];
@@ -607,10 +603,7 @@ out center bb;`;
 
   // Export / Import Logic
   const handleExport = () => {
-    const data = {
-      path: pathRef.current,
-      collected: collectedLandmarks
-    };
+    const data = { path: pathRef.current, collected: collectedLandmarks };
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -634,7 +627,6 @@ out center bb;`;
           pathRef.current = data.path;
           localStorage.setItem('fogWorldLivePath', JSON.stringify(data.path));
 
-          // Re-hydrate explored grid cells
           const cells = new Set();
           data.path.forEach(p => {
             if (p && Array.isArray(p) && p.length === 2) {
@@ -666,7 +658,6 @@ out center bb;`;
   const executeTeleport = async () => {
     if (!teleportQuery.trim()) return;
     setIsTeleporting(true);
-    console.log(`[Fog World] Attempting teleport to: ${teleportQuery}`);
     try {
       let lat, lon;
       const query = teleportQuery.trim();
@@ -681,7 +672,6 @@ out center bb;`;
         if (data && data.length > 0) {
           lat = parseFloat(data[0].lat);
           lon = parseFloat(data[0].lon);
-          console.log(`[Fog World] Teleport geocode success: ${data[0].display_name}`);
         } else {
           alert("Location not found! Try a known city name.");
           setIsTeleporting(false);
@@ -702,7 +692,6 @@ out center bb;`;
       setShowTeleportModal(false);
       setTeleportQuery('');
     } catch (e) {
-      console.warn("[Fog World] Teleportation failed:", e);
       alert("Teleportation failed.");
     }
     setIsTeleporting(false);
@@ -718,7 +707,6 @@ out center bb;`;
   };
 
   const openProfile = async () => {
-    console.log("[Fog World] Opening Profile...");
     setShowProfile(true);
     setRegionalAreas({ country: null, state: null, local: null });
 
@@ -741,7 +729,7 @@ out center bb;`;
         country = data.address.country; state = data.address.state; local = data.address.city || data.address.town || data.address.county;
         setGeoData({ country: country || 'Unknown', state: state || 'Unknown', city: local || 'Unknown' });
       }
-    } catch (e) { console.warn("[Fog World] Reverse geocoding failed for profile area:", e); return; }
+    } catch (e) { return; }
 
     if (country) {
       try {
@@ -762,7 +750,7 @@ out center bb;`;
     }
   };
 
-  // NEW: Filter collected list before rendering bag
+  // Format data for the bag
   const visibleCollected = showOnlyWiki 
     ? (collectedLandmarks || []).filter(lm => lm.wikipedia) 
     : (collectedLandmarks || []);
@@ -778,6 +766,7 @@ out center bb;`;
     return acc;
   }, {}) : {};
 
+  // Loading State
   if (isLocating) {
     return (
       <div className="flex flex-col items-center justify-center w-full h-screen bg-slate-900 text-white">
@@ -800,255 +789,53 @@ out center bb;`;
         </div>
       )}
 
+      {/* Map Layers */}
       <div ref={mapContainerRef} className="absolute inset-0 z-0 w-full h-full" />
       <canvas ref={canvasRef} className="absolute inset-0 z-10 w-full h-full pointer-events-none" />
 
-      {/* Top Status */}
-      <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-start pointer-events-none">
-        <div className="bg-white/95 backdrop-blur-xl p-3 rounded-2xl shadow-xl border border-slate-100 pointer-events-auto">
-          <h3 className="text-md font-bold text-slate-800 flex items-center gap-2">
-            <MapPin className="text-blue-500" size={16} /> Fog World
-          </h3>
-          {locationError && <p className="text-[10px] text-red-500 mt-1">{locationError}</p>}
-        </div>
-        <div className="pointer-events-auto">
-          <button onClick={openProfile} className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-2xl shadow-xl transition-colors active:scale-95 flex items-center gap-2 font-semibold">
-            <User size={18} />
-          </button>
-        </div>
-      </div>
+      {/* Extracted UI Components */}
+      <TopStatus 
+        locationError={locationError} 
+        openProfile={openProfile} 
+      />
 
-      {/* Bottom Controls */}
-      <div className="absolute bottom-6 left-4 right-4 z-20 flex justify-between items-end pointer-events-none">
+      <BottomControls 
+        gpsActive={gpsActive}
+        setGpsActive={setGpsActive}
+        setShowTeleportModal={setShowTeleportModal}
+        showOnlyWiki={showOnlyWiki}
+        setShowOnlyWiki={setShowOnlyWiki}
+        manualMove={manualMove}
+        STEP_SIZE={STEP_SIZE}
+      />
 
-        <div className="pointer-events-auto bg-white/95 backdrop-blur-xl p-3 rounded-3xl shadow-2xl border border-slate-100 flex flex-col gap-2">
-          <button onClick={() => setGpsActive(!gpsActive)} className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl font-semibold transition-all active:scale-95 ${gpsActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'bg-slate-100 text-slate-600'}`}>
-            <Crosshair size={18} className={gpsActive ? "animate-pulse" : ""} /> {gpsActive ? "Live GPS" : "GPS Off"}
-          </button>
+      <TeleportModal 
+        showTeleportModal={showTeleportModal}
+        setShowTeleportModal={setShowTeleportModal}
+        teleportQuery={teleportQuery}
+        setTeleportQuery={setTeleportQuery}
+        executeTeleport={executeTeleport}
+        isTeleporting={isTeleporting}
+      />
 
-          <button onClick={() => setShowTeleportModal(true)} className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold transition-all active:scale-95 bg-purple-100 text-purple-700 hover:bg-purple-200">
-            <Rocket size={18} /> Teleport
-          </button>
-
-          {/* NEW: Wiki Filter Toggle */}
-          <button onClick={() => setShowOnlyWiki(!showOnlyWiki)} className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold transition-all active:scale-95 ${showOnlyWiki ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-            <Book size={18} /> {showOnlyWiki ? "Wiki Only" : "All Sites"}
-          </button>
-        </div>
-
-        <div className="pointer-events-auto bg-white/95 backdrop-blur-xl p-3 rounded-3xl shadow-2xl border border-slate-100">
-          <div className="grid grid-cols-3 gap-2">
-            <div />
-            <button onClick={() => manualMove(STEP_SIZE, 0)} className="bg-slate-100 p-3 rounded-xl flex items-center justify-center active:scale-90"><ChevronUp size={20} className="text-slate-700" /></button>
-            <div />
-            <button onClick={() => manualMove(0, -STEP_SIZE)} className="bg-slate-100 p-3 rounded-xl flex items-center justify-center active:scale-90"><ChevronLeft size={20} className="text-slate-700" /></button>
-            <button onClick={() => manualMove(-STEP_SIZE, 0)} className="bg-slate-100 p-3 rounded-xl flex items-center justify-center active:scale-90"><ChevronDown size={20} className="text-slate-700" /></button>
-            <button onClick={() => manualMove(0, STEP_SIZE)} className="bg-slate-100 p-3 rounded-xl flex items-center justify-center active:scale-90"><ChevronRight size={20} className="text-slate-700" /></button>
-          </div>
-        </div>
-      </div>
-
-      {/* TELEPORT MODAL */}
-      {showTeleportModal && (
-        <div className="absolute inset-0 z-[70] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white p-6 rounded-3xl max-w-sm w-full shadow-2xl">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <Rocket className="text-purple-500" /> Jump to Location
-              </h3>
-              <button onClick={() => setShowTeleportModal(false)} className="text-slate-400 hover:text-slate-700"><X size={20} /></button>
-            </div>
-
-            <p className="text-sm text-slate-500 mb-4">
-              Enter a city name or coordinates (Lat, Lng) to drop instantly.
-            </p>
-
-            <div className="relative mb-6">
-              <Search className="absolute left-3 top-3 text-slate-400" size={18} />
-              <input
-                type="text"
-                placeholder="e.g., Tokyo, or 35.68, 139.69"
-                className="w-full bg-slate-100 border-none rounded-xl py-3 pl-10 pr-4 text-slate-800 focus:ring-2 focus:ring-purple-500 outline-none"
-                value={teleportQuery}
-                onChange={(e) => setTeleportQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && executeTeleport()}
-                autoFocus
-              />
-            </div>
-
-            <button
-              onClick={executeTeleport}
-              disabled={isTeleporting || !teleportQuery.trim()}
-              className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl flex justify-center items-center gap-2 transition-colors"
-            >
-              {isTeleporting ? <Activity className="animate-spin" size={20} /> : "Teleport"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* PROFILE OVERLAY */}
-      {showProfile && (
-        <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur-md overflow-y-auto">
-
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleImport}
-            accept=".json"
-            className="hidden"
-          />
-
-          {/* CONFIRMATION MODAL */}
-          {showConfirmWipe && (
-            <div className="fixed inset-0 z-[60] bg-slate-900/90 flex items-center justify-center p-4">
-              <div className="bg-slate-800 p-6 rounded-2xl max-w-sm w-full border border-slate-700 shadow-2xl">
-                <h3 className="text-xl font-bold text-white mb-2">Wipe Data?</h3>
-                <p className="text-slate-300 mb-6">Are you sure you want to wipe all explored data and empty your bag? This cannot be undone.</p>
-                <div className="flex gap-3 justify-end">
-                  <button onClick={() => setShowConfirmWipe(false)} className="px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors">Cancel</button>
-                  <button onClick={executeClearData} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">Yes, Wipe Data</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="max-w-lg mx-auto p-6 text-slate-100 pb-20">
-            <div className="flex justify-between items-center mb-6 pt-4">
-              <h2 className="text-2xl font-bold flex items-center gap-2">
-                <User className="text-blue-400" /> Profile
-              </h2>
-              <div className="flex gap-4 items-center">
-                <button onClick={handleExport} title="Export Save" className="p-2 text-slate-400 hover:text-blue-400 transition-colors"><Download size={20} /></button>
-                <button onClick={() => fileInputRef.current?.click()} title="Import Save" className="p-2 text-slate-400 hover:text-green-400 transition-colors"><Upload size={20} /></button>
-                <button onClick={() => setShowConfirmWipe(true)} title="Wipe Data" className="p-2 text-slate-400 hover:text-red-400 transition-colors"><Trash2 size={20} /></button>
-                <div className="w-px h-6 bg-slate-700 mx-1"></div>
-                <button onClick={() => setShowProfile(false)} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors"><X size={20} /></button>
-              </div>
-            </div>
-
-            {/* TABS */}
-            <div className="flex gap-2 mb-6 bg-slate-800 p-1 rounded-xl">
-              <button onClick={() => setActiveTab('stats')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'stats' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                <Activity size={16} /> Map Stats
-              </button>
-              <button onClick={() => setActiveTab('bag')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all flex items-center justify-center gap-2 ${activeTab === 'bag' ? 'bg-yellow-500 text-slate-900 shadow-md' : 'text-slate-400 hover:text-white'}`}>
-                <Backpack size={16} /> Landmarks Bag ({Array.isArray(visibleCollected) ? visibleCollected.length : 0})
-              </button>
-            </div>
-
-            {/* TAB: STATS */}
-            {activeTab === 'stats' && (
-              <div className="space-y-6">
-                <div className="bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700">
-                  <div className="flex items-center gap-3 mb-4"><Globe className="text-green-400" size={24} /> <h3 className="text-xl font-semibold">World Overview</h3></div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-slate-900/50 p-4 rounded-2xl">
-                      <div className="text-sm text-slate-400 mb-1">Total Distance</div>
-                      <div className="text-xl font-mono font-bold text-white">{stats.distance < 1 ? (stats.distance * 1000).toFixed(0) + ' m' : stats.distance.toFixed(2) + ' km'}</div>
-                    </div>
-                    <div className="bg-slate-900/50 p-4 rounded-2xl">
-                      <div className="text-sm text-slate-400 mb-1">Cleared Area</div>
-                      <div className="text-xl font-mono font-bold text-blue-400">{stats.areaKm < 1 ? (stats.areaKm * 1000000).toFixed(0) + ' m²' : stats.areaKm.toFixed(3) + ' km²'}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <h3 className="text-lg font-semibold px-2 flex items-center gap-2"><MapPin className="text-purple-400" /> Regional Data</h3>
-                {!geoData ? (
-                  <div className="text-center p-8 text-slate-500 bg-slate-800/50 rounded-3xl border border-slate-700 border-dashed">
-                    <Activity className="animate-spin mx-auto mb-3 opacity-50" size={32} /> Scanning topography...
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700/50">
-                      <div className="flex justify-between mb-2"><div><div className="text-xs text-slate-500 uppercase">Country</div><div className="text-lg font-semibold">{geoData.country}</div></div></div>
-                      {regionalAreas.country && <div className="text-xs text-green-400 font-mono">{((stats.areaKm / regionalAreas.country) * 100).toFixed(6)}% Unlocked</div>}
-                    </div>
-                    <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700/50">
-                      <div className="flex justify-between mb-2"><div><div className="text-xs text-slate-500 uppercase">State</div><div className="text-lg font-semibold">{geoData.state}</div></div></div>
-                      {regionalAreas.state && <div className="text-xs text-green-400 font-mono">{((stats.areaKm / regionalAreas.state) * 100).toFixed(6)}% Unlocked</div>}
-                    </div>
-                    <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700/50">
-                      <div className="flex justify-between mb-2"><div><div className="text-xs text-slate-500 uppercase">City</div><div className="text-lg font-semibold">{geoData.city}</div></div></div>
-                      {regionalAreas.local && <div className="text-xs text-green-400 font-mono">{((stats.areaKm / regionalAreas.local) * 100).toFixed(6)}% Unlocked</div>}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* TAB: BAG */}
-            {activeTab === 'bag' && (
-              <div className="bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700 min-h-[400px]">
-                {!visibleCollected || visibleCollected.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-500 pt-10">
-                    <Backpack size={48} className="mb-4 opacity-50" />
-                    <p className="text-center">{showOnlyWiki ? "No Wikipedia sites found yet." : "Your bag is empty."}</p>
-                    <p className="text-sm text-center mt-2">Explore the map to find glowing ⭐ landmarks hiding in the fog!</p>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    {Object.entries(groupedBag).map(([country, states]) => (
-                      <div key={country} className="border-l-4 border-yellow-500 pl-4 py-1">
-                        <h3 className="text-xl font-bold text-yellow-400 mb-3 flex items-center gap-2"><Globe size={18} /> {country}</h3>
-
-                        {Object.entries(states).map(([state, cities]) => (
-                          <div key={state} className="ml-2 mb-4">
-                            <h4 className="text-md font-semibold text-slate-300 mb-2">{state}</h4>
-
-                            {Object.entries(cities).map(([city, lms]) => (
-                              <div key={city} className="ml-3 mt-1 pl-3 border-l-2 border-slate-700 mb-3">
-                                <h5 className="text-sm font-bold text-slate-500 mb-2 uppercase tracking-wider">{city}</h5>
-                                <div className="space-y-2">
-                                  {lms.map(lm => (
-                                    <div key={lm.id} className="flex items-center gap-3 text-white bg-slate-900/80 p-3 rounded-xl border border-slate-700 shadow-sm">
-                                      <div className={`p-2 rounded-lg ${lm.type === 'park/boundary' ? 'bg-green-500/20' : 'bg-yellow-500/20'}`}>
-                                        {lm.type === 'park/boundary' ?
-                                          <Trees size={16} className="text-green-400" /> :
-                                          <Star size={16} className="text-yellow-400 fill-yellow-400" />
-                                        }
-                                      </div>
-                                      <div className="w-full">
-                                        <div className="font-semibold text-sm flex items-center gap-2">
-                                          {lm.name}
-                                          <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase tracking-widest ${lm.type === 'park/boundary' ? 'bg-green-900 text-green-300' : 'bg-slate-700 text-slate-300'}`}>
-                                            {lm.specificType || lm.type}
-                                          </span>
-                                        </div>
-                                        <div className="text-[10px] text-slate-500 font-mono mt-0.5 mb-1">
-                                          Found: {new Date(lm.date).toLocaleDateString()}
-                                        </div>
-
-                                        {/* New Details Section */}
-                                        {(lm.description || lm.wikipedia) && (
-                                          <div className="mt-2 text-xs text-slate-400 border-t border-slate-700/50 pt-2 space-y-1">
-                                            {lm.description && <p className="italic text-slate-300">"{lm.description}"</p>}
-                                            {lm.wikipedia && (
-                                              <a href={lm.wikipedia} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors">
-                                                <Globe size={10} /> Read on Wikipedia
-                                              </a>
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-          </div>
-        </div>
-      )}
+      <ProfileOverlay 
+        showProfile={showProfile}
+        setShowProfile={setShowProfile}
+        handleImport={handleImport}
+        handleExport={handleExport}
+        fileInputRef={fileInputRef}
+        showConfirmWipe={showConfirmWipe}
+        setShowConfirmWipe={setShowConfirmWipe}
+        executeClearData={executeClearData}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        stats={stats}
+        geoData={geoData}
+        regionalAreas={regionalAreas}
+        groupedBag={groupedBag}
+        visibleCollectedCount={Array.isArray(visibleCollected) ? visibleCollected.length : 0}
+        showOnlyWiki={showOnlyWiki}
+      />
 
     </div>
   );
