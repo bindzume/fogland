@@ -52,21 +52,27 @@ const CHUNK_SIZE = 0.05; // ~5.5km chunks
 // Rate limiter for Overpass API — queues requests so they're spaced at least 1.5s apart
 const overpassRateLimiter = (() => {
   let lastRequestTime = 0;
+  let requestCount = 0;
   const MIN_INTERVAL_MS = 1500;
   let queue = Promise.resolve();
 
   return () => {
+    requestCount++;
+    const thisRequest = requestCount;
     queue = queue.then(() => {
       const now = Date.now();
       const elapsed = now - lastRequestTime;
       if (elapsed < MIN_INTERVAL_MS) {
+        const delayMs = MIN_INTERVAL_MS - elapsed;
+        console.log(`[Overpass RL] Request #${thisRequest} throttled — waiting ${delayMs}ms (last request ${elapsed}ms ago)`);
         return new Promise(resolve => {
           setTimeout(() => {
             lastRequestTime = Date.now();
             resolve();
-          }, MIN_INTERVAL_MS - elapsed);
+          }, delayMs);
         });
       }
+      console.log(`[Overpass RL] Request #${thisRequest} cleared — ${elapsed}ms since last request`);
       lastRequestTime = Date.now();
     });
     return queue;
@@ -75,38 +81,67 @@ const overpassRateLimiter = (() => {
 
 // Custom fetcher that handles 429/503/504 with exponential backoff + rate limiting
 const fetchWithRetry = async (url, body, retries = 4, initialBackoff = 2000) => {
+  const requestId = `req_${Date.now().toString(36)}`;
+  const queryPreview = body.length > 120 ? body.slice(0, 120) + '…' : body;
+  console.group(`[Overpass] ${requestId} — Starting request`);
+  console.log(`[Overpass] URL: ${url}`);
+  console.log(`[Overpass] Query: ${queryPreview}`);
+  console.log(`[Overpass] Config: retries=${retries}, initialBackoff=${initialBackoff}ms`);
+  console.groupEnd();
+
   let backoff = initialBackoff;
   for (let i = 0; i < retries; i++) {
+    console.log(`[Overpass] ${requestId} — Attempt ${i + 1}/${retries}, awaiting rate limiter...`);
+    const rlStart = Date.now();
     await overpassRateLimiter();
+    const rlWait = Date.now() - rlStart;
+    if (rlWait > 50) {
+      console.log(`[Overpass] ${requestId} — Rate limiter held for ${rlWait}ms`);
+    }
 
     try {
+      const fetchStart = Date.now();
+      console.log(`[Overpass] ${requestId} — Sending POST...`);
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `data=${encodeURIComponent(body)}`
       });
+      const fetchDuration = Date.now() - fetchStart;
+
+      console.log(`[Overpass] ${requestId} — Response: ${response.status} ${response.statusText} (${fetchDuration}ms)`);
 
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const waitMs = retryAfter ? Math.max(parseInt(retryAfter, 10) * 1000, backoff) : backoff;
-        console.warn(`Overpass 429 (attempt ${i + 1}/${retries}). Waiting ${waitMs}ms...`);
+        console.warn(`[Overpass] ${requestId} — 429 Rate Limited! Retry-After header: ${retryAfter || 'none'}. Waiting ${waitMs}ms before retry...`);
         await new Promise(resolve => setTimeout(resolve, waitMs));
         backoff *= 2;
         continue;
       }
 
       if (response.status === 503 || response.status === 504) {
-        console.warn(`Overpass ${response.status} (attempt ${i + 1}/${retries}). Retrying in ${backoff}ms...`);
+        console.warn(`[Overpass] ${requestId} — ${response.status} Server Error. Waiting ${backoff}ms before retry...`);
         await new Promise(resolve => setTimeout(resolve, backoff));
         backoff *= 2;
         continue;
       }
 
-      if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-      return await response.json();
+      if (!response.ok) {
+        console.error(`[Overpass] ${requestId} — Unexpected HTTP ${response.status}. Not retrying.`);
+        throw new Error(`HTTP Error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const elementCount = data?.elements?.length ?? 0;
+      console.log(`[Overpass] ${requestId} — Success! Received ${elementCount} elements (total time: ${Date.now() - fetchStart}ms)`);
+      return data;
     } catch (err) {
-      if (i === retries - 1) throw err;
-      console.warn(`Overpass fetch failed (attempt ${i + 1}/${retries}). Retrying in ${backoff}ms...`);
+      if (i === retries - 1) {
+        console.error(`[Overpass] ${requestId} — All ${retries} attempts exhausted. Final error:`, err.message);
+        throw err;
+      }
+      console.warn(`[Overpass] ${requestId} — Network error: ${err.message}. Waiting ${backoff}ms before retry...`);
       await new Promise(resolve => setTimeout(resolve, backoff));
       backoff *= 2;
     }
@@ -464,14 +499,19 @@ const startAppTracking = async () => {
 
     const loadLandmarks = async () => {
       const [lat, lon] = currentPos;
-      
+
       // Calculate strict chunk grid boundaries
       const chunkLat = Math.floor(lat / CHUNK_SIZE) * CHUNK_SIZE;
       const chunkLon = Math.floor(lon / CHUNK_SIZE) * CHUNK_SIZE;
       const chunkId = `osm_chunk_${chunkLat.toFixed(3)}_${chunkLon.toFixed(3)}`;
 
+      console.log(`[Landmarks] Position: [${lat.toFixed(5)}, ${lon.toFixed(5)}] → Chunk: ${chunkId}`);
+
       // If we already processed this chunk during this app session, skip!
-      if (loadedChunksRef.current.has(chunkId)) return;
+      if (loadedChunksRef.current.has(chunkId)) {
+        console.log(`[Landmarks] Chunk ${chunkId} already loaded this session — skipping`);
+        return;
+      }
 
       let rawElements = [];
 
@@ -480,27 +520,35 @@ const startAppTracking = async () => {
         const cached = localStorage.getItem(chunkId);
         if (cached) {
           rawElements = JSON.parse(cached);
-          console.log(`Loaded ${rawElements.length} elements from CACHE for ${chunkId}`);
+          console.log(`[Landmarks] Cache HIT for ${chunkId} — ${rawElements.length} elements (${(cached.length / 1024).toFixed(1)}KB)`);
+        } else {
+          console.log(`[Landmarks] Cache MISS for ${chunkId}`);
         }
-      } catch (e) { console.warn("Cache read error"); }
+      } catch (e) { console.warn(`[Landmarks] Cache read error for ${chunkId}:`, e.message); }
 
       // --- 2. FETCH IF NOT CACHED ---
       if (rawElements.length === 0) {
-        console.log(`Fetching NEW chunk from Overpass: ${chunkId}`);
         const minLat = chunkLat.toFixed(5);
         const maxLat = (chunkLat + CHUNK_SIZE).toFixed(5);
         const minLon = chunkLon.toFixed(5);
         const maxLon = (chunkLon + CHUNK_SIZE).toFixed(5);
 
+        console.log(`[Landmarks] Fetching chunk from Overpass — bbox: [${minLat},${minLon},${maxLat},${maxLon}]`);
+
         let dynamicNodes = '';
+        const activeTagSummary = [];
         Object.entries(osmTags).forEach(([key, valuesObj]) => {
           const activeValues = Object.entries(valuesObj).filter(([_, isActive]) => isActive).map(([v]) => v);
           if (activeValues.length > 0) {
             dynamicNodes += `  nwr["${key}"~"${activeValues.join('|')}"](${minLat},${minLon},${maxLat},${maxLon});\n`;
+            activeTagSummary.push(`${key}:[${activeValues.join(',')}]`);
           }
         });
 
+        console.log(`[Landmarks] Active tags: ${activeTagSummary.join(', ')}`);
+
         if (!dynamicNodes) {
+          console.warn('[Landmarks] No active OSM tags configured — skipping fetch');
           setNearbyLandmarks([]);
           return;
         }
@@ -508,27 +556,39 @@ const startAppTracking = async () => {
         const query = `[out:json][timeout:25];\n(\n${dynamicNodes});\nout center bb;`;
 
         try {
+          const fetchStart = Date.now();
           const data = await fetchWithRetry('https://overpass-api.de/api/interpreter', query);
+          const fetchDuration = Date.now() - fetchStart;
+
           if (data && data.elements) {
             rawElements = data.elements;
-            
+            console.log(`[Landmarks] Fetch complete — ${rawElements.length} elements in ${fetchDuration}ms`);
+
             // Save to LocalStorage to prevent ever querying this 5km area again
             try {
               const dataString = JSON.stringify(rawElements);
-              // Safety limit to prevent exceeding browser quota (2MB limit check)
-              if (dataString.length < 2000000) localStorage.setItem(chunkId, dataString);
-            } catch (e) { console.warn("Cache full"); }
+              if (dataString.length < 2000000) {
+                localStorage.setItem(chunkId, dataString);
+                console.log(`[Landmarks] Cached ${chunkId} — ${(dataString.length / 1024).toFixed(1)}KB`);
+              } else {
+                console.warn(`[Landmarks] Chunk too large to cache: ${(dataString.length / 1024).toFixed(1)}KB (limit 2MB)`);
+              }
+            } catch (e) { console.warn(`[Landmarks] Cache write failed: ${e.message}`); }
+          } else {
+            console.warn(`[Landmarks] Fetch returned no elements (${fetchDuration}ms)`);
           }
         } catch (err) {
-          console.error("Overpass Fetch & Retries Failed:", err);
+          console.error(`[Landmarks] Overpass fetch failed after all retries:`, err.message);
           return; // Abort processing if fetch failed entirely
         }
       }
 
-      // --- 3. PROCESS DATA (Your exact original logic) ---
+      // --- 3. PROCESS DATA ---
       if (rawElements.length > 0) {
-        const items = rawElements
-          .filter(e => e.tags && e.tags.name)
+        const withNames = rawElements.filter(e => e.tags && e.tags.name);
+        console.log(`[Landmarks] Processing: ${rawElements.length} raw → ${withNames.length} with names`);
+
+        const items = withNames
           .map(e => {
             const isBoundaryType = e.tags.leisure || e.tags.boundary || (e.tags.historic && e.bounds);
             const isBoundary = isBoundaryType && !!e.bounds;
@@ -576,13 +636,22 @@ const startAppTracking = async () => {
           })
           .filter(e => e.lat != null && e.lon != null);
 
+        const boundaryCount = items.filter(i => i.isBoundary).length;
+        const pointCount = items.length - boundaryCount;
+        const wikiCount = items.filter(i => i.wikipedia).length;
+        console.log(`[Landmarks] Processed: ${items.length} landmarks (${pointCount} points, ${boundaryCount} boundaries, ${wikiCount} with Wikipedia)`);
+
         // --- 4. UPDATE STATE ---
         setNearbyLandmarks(prev => {
           const map = new Map();
           // Keep old landmarks up to 15km away so they don't pop-out when crossing chunk lines
+          const keptCount = prev.filter(lm => getDistanceKm(currentPos[0], currentPos[1], lm.lat, lm.lon) < 15).length;
+          const prunedCount = prev.length - keptCount;
           prev.forEach(lm => { if (getDistanceKm(currentPos[0], currentPos[1], lm.lat, lm.lon) < 15) map.set(lm.id, lm); });
           items.forEach(lm => map.set(lm.id, lm));
-          return Array.from(map.values());
+          const result = Array.from(map.values());
+          console.log(`[Landmarks] State update: ${prev.length} existing (${prunedCount} pruned >15km) + ${items.length} new → ${result.length} total`);
+          return result;
         });
 
         // Mark chunk as successfully processed for this session
