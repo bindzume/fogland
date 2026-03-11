@@ -53,6 +53,7 @@ export default function App() {
   const canvasRef = useRef(null);
   const watchIdRef = useRef(null);
   const fileInputRef = useRef(null);
+  const lastReportedPosRef = useRef(null);
 
   const pathRef = useRef([]);
   const visitedCellsRef = useRef(new Set());
@@ -204,19 +205,42 @@ export default function App() {
     }
   };
 
-  // 2. Watch Real GPS
+  // 2. Watch Real GPS (With Anti-Drift Threshold)
   useEffect(() => {
-    if (!gpsActive || isLocating || !appStarted) { // ADDED !appStarted
+    if (!gpsActive || isLocating || !appStarted) {
       if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
       return;
     }
+    
     watchIdRef.current = navigator.geolocation.watchPosition(
-      (position) => handleNewLocation([position.coords.latitude, position.coords.longitude]),
+      (position) => {
+        const newLat = position.coords.latitude;
+        const newLng = position.coords.longitude;
+
+        // Anti-Jitter: Calculate distance from the last time we updated the map
+        if (lastReportedPosRef.current) {
+          const distKm = getDistanceKm(
+            lastReportedPosRef.current[0], lastReportedPosRef.current[1],
+            newLat, newLng
+          );
+          
+          // 0.005 km = 5 meters. If we moved less than 5m, ignore the micro-drift!
+          if (distKm < 0.005) {
+            return; 
+          }
+        }
+
+        // If we made it here, it's a real movement. Save it and update the map!
+        lastReportedPosRef.current = [newLat, newLng];
+        handleNewLocation([newLat, newLng]);
+      },
       (error) => console.warn("GPS Watch error:", error),
-      { enableHighAccuracy: true, distanceFilter: 5 }
+      // Tweaked settings to prevent hardware exhaustion
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 5000 } 
     );
+    
     return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
-  }, [gpsActive, isLocating, appStarted]); // ADDED appStarted
+  }, [gpsActive, isLocating, appStarted]);
 
 
   // Drawing Fog
@@ -289,14 +313,17 @@ export default function App() {
   useEffect(() => { collectedLandmarksRef.current = collectedLandmarks; drawFog(); }, [collectedLandmarks, drawFog]);
 
   // Handle Location Updates
-  const handleNewLocation = useCallback((newPos) => {
+ const handleNewLocation = useCallback((newPos) => {
     try {
       if (!Array.isArray(newPos) || newPos.length !== 2) return;
+      
+      // 1. Update React State & Local Storage
       setCurrentPos(newPos);
       const updatedPath = [...pathRef.current, newPos];
       pathRef.current = updatedPath;
       try { localStorage.setItem('fogWorldLivePath', JSON.stringify(updatedPath)); } catch (e) { }
 
+      // 2. Grid Exploration Logic (Keep this exactly as is)
       const cellId = `${Math.floor(newPos[0] / CELL_SIZE)}_${Math.floor(newPos[1] / CELL_SIZE)}`;
       let newlyExploredCell = false;
 
@@ -322,8 +349,22 @@ export default function App() {
         });
       }
 
-      if (markerRef.current) markerRef.current.setLatLng(newPos);
-      if (mapInstanceRef.current) mapInstanceRef.current.setView(newPos, mapInstanceRef.current.getZoom(), { animate: true });
+      // 3. THE FIX: Smooth Map Updating
+      if (markerRef.current) {
+        markerRef.current.setLatLng(newPos); // Always move the blue dot
+      }
+
+      if (mapInstanceRef.current) {
+        // Check if the new coordinate is currently visible on the screen
+        const bounds = mapInstanceRef.current.getBounds();
+        const isVisible = bounds.contains(window.L.latLng(newPos[0], newPos[1]));
+        
+        // ONLY move the background map if the user walks off the screen
+        if (!isVisible) {
+          mapInstanceRef.current.panTo(newPos, { animate: true, duration: 1 });
+        }
+      }
+      
       drawFog();
     } catch (err) {}
   }, [drawFog]);
