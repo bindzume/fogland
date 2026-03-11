@@ -2,13 +2,15 @@
 
 I saw an ad for Fog of War on twitter and thought it was cool. Then I saw it was $30
 
-Here is a free version
+Here is a free version (special thanks to my university for letting me use gemini pro even after graduation)
 
 # How to build
 
+```
 npm install
 npm run build
 npx cap sync android
+```
 
 Go to android studio and do what needs to be done.
 
