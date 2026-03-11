@@ -91,6 +91,11 @@ export default function App() {
   const [collectedLandmarks, setCollectedLandmarks] = useState([]);
   const [justCollected, setJustCollected] = useState(null);
 
+  const [isTracking, setIsTracking] = useState(true);
+  // NEW: Add a ref to safely read this inside our map functions
+  const isTrackingRef = useRef(isTracking);
+  useEffect(() => { isTrackingRef.current = isTracking; }, [isTracking]);
+
   // Settings States
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('fogWorldDebug') === 'true');
   
@@ -248,6 +253,7 @@ export default function App() {
     try {
       const canvas = canvasRef.current;
       const map = mapInstanceRef.current;
+      
       if (!canvas || !map || !pathRef.current || pathRef.current.length === 0) return;
 
       const ctx = canvas.getContext('2d');
@@ -319,8 +325,43 @@ export default function App() {
       
       // 1. Update React State & Local Storage
       setCurrentPos(newPos);
-      const updatedPath = [...pathRef.current, newPos];
+      
+      
+      //const updatedPath = [...pathRef.current, newPos];
+      //pathRef.current = updatedPath;
+      
+      // === THE FIX: Prevent long lines on big jumps ===
+      let updatedPath;
+      const currentPath = pathRef.current;
+      let lastValidPos = null;
+
+      // Search backwards to find the most recent actual coordinate (ignoring previous nulls)
+      for (let i = currentPath.length - 1; i >= 0; i--) {
+        if (currentPath[i] && Array.isArray(currentPath[i]) && currentPath[i].length === 2) {
+          lastValidPos = currentPath[i];
+          break;
+        }
+      }
+
+      if (lastValidPos) {
+        // Calculate distance between the last recorded point and the new point
+        const distKm = getDistanceKm(lastValidPos[0], lastValidPos[1], newPos[0], newPos[1]);
+
+        // 0.1 km = 100 meters. If a single GPS update jumps further than this, break the line!
+        if (distKm > 0.2) {
+          updatedPath = [...currentPath, null, newPos];
+          console.log("Large jump detected! Breaking the path line.");
+        } else {
+          updatedPath = [...currentPath, newPos];
+        }
+      } else {
+        // First point ever
+        updatedPath = [...currentPath, newPos];
+      }
+
       pathRef.current = updatedPath;
+
+      
       try { localStorage.setItem('fogWorldLivePath', JSON.stringify(updatedPath)); } catch (e) { }
 
       // 2. Grid Exploration Logic (Keep this exactly as is)
@@ -349,21 +390,16 @@ export default function App() {
         });
       }
 
-      // 3. THE FIX: Smooth Map Updating
+// 3. THE FIX: Smooth Map Updating (Now with Follow Mode!)
       if (markerRef.current) {
         markerRef.current.setLatLng(newPos); // Always move the blue dot
       }
 
-      if (mapInstanceRef.current) {
-        // Check if the new coordinate is currently visible on the screen
+// CHANGE THIS LINE: Use isTrackingRef.current instead of isTracking
+      if (mapInstanceRef.current && isTrackingRef.current) {
         const bounds = mapInstanceRef.current.getBounds();
-        const isVisible = bounds.contains(window.L.latLng(newPos[0], newPos[1]));
-        
-        // ONLY move the background map if the user walks off the screen
-        if (!isVisible) {
-          mapInstanceRef.current.panTo(newPos, { animate: true, duration: 1 });
-        }
       }
+      mapInstanceRef.current.panTo(newPos, { animate: true, duration: 1 });
       
       drawFog();
     } catch (err) {}
@@ -561,6 +597,15 @@ export default function App() {
         mapInstanceRef.current = map; setMapReady(true);
         map.on('move', drawFog); map.on('zoom', drawFog); window.addEventListener('resize', drawFog);
 
+        map.on('dragstart', () => {
+          setIsTracking(false);
+        });
+
+        // NEW: Disable tracking if the user manually zooms in/out
+        map.on('zoomstart', () => {
+          setIsTracking(false);
+        });
+
         map.on('dblclick', (e) => {
           if (localStorage.getItem('fogWorldDebug') !== 'true') return;
           setGpsActive(false);
@@ -575,7 +620,7 @@ export default function App() {
     };
     initMap();
     return () => { isMounted = false; window.removeEventListener('resize', drawFog); if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; setMapReady(false); } };
-  }, [isLocating, currentPos, drawFog, handleNewLocation]);
+  }, [isLocating]);
 
   const manualMove = (latOffset, lngOffset) => {
     if (!currentPos || !Array.isArray(currentPos) || !debugMode) return;
@@ -752,6 +797,22 @@ export default function App() {
       <canvas ref={canvasRef} className="absolute inset-0 z-10 w-full h-full pointer-events-none" />
 
       <TopStatus locationError={locationError} openProfile={openProfile} />
+      {/* Recenter Button - Only shows when user has panned away */}
+      {!isTracking && (
+        <button 
+          onClick={() => {
+            console.log(isTracking);
+            console.log("[Fog World] Recenter triggered, following user again.");
+            if (mapInstanceRef.current && currentPos) {
+              mapInstanceRef.current.flyTo(currentPos, BASE_ZOOM, { animate: true });
+            }
+            setIsTracking(true);
+          }}
+          className="absolute bottom-32 right-4 z-20 bg-blue-600 text-white p-4 rounded-full shadow-[0_0_15px_rgba(0,0,0,0.3)] transition-all active:scale-90"
+        >
+          <Navigation size={24} />
+        </button>
+      )}
       <BottomControls 
         gpsActive={gpsActive} setGpsActive={setGpsActive} setShowTeleportModal={setShowTeleportModal} 
         showOnlyWiki={showOnlyWiki} setShowOnlyWiki={setShowOnlyWiki} manualMove={manualMove} STEP_SIZE={STEP_SIZE} 
