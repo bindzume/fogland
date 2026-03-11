@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Navigation, Sparkles, MapPin } from 'lucide-react';
+import { KeepAwake } from '@capacitor-community/keep-awake';
 
 import TopStatus from './components/TopStatus';
 import BottomControls from './components/BottomControls';
@@ -172,9 +173,10 @@ export default function App() {
   }, []);
 
   // NEW: The function that triggers the GPS request (Satisfies User Gesture)
-  const startAppTracking = () => {
+  const startAppTracking = async () => {
     setAppStarted(true);
     setIsLocating(true);
+    await KeepAwake.keepAwake();
     
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -756,20 +758,16 @@ export default function App() {
     acc[c][s][city].push(lm); return acc;
   }, {}) : {};
 
-  if (!appStarted && permissionState === 'prompt') {
+// Show a loading screen while waiting for the initial GPS lock or permissions
+  if (!currentPos || !appStarted) {
+    appStarted || startAppTracking(); // Ensure we trigger the GPS request on first load
     return (
       <div className="flex flex-col items-center justify-center w-full h-screen bg-slate-900 text-white p-6 text-center">
-        <MapPin className="text-blue-500 mb-6" size={64} />
+        <MapPin className="text-blue-500 animate-bounce mb-6" size={64} />
         <h1 className="text-4xl font-bold mb-4">Fog World</h1>
-        <p className="text-slate-400 mb-8 max-w-sm">
-          Explore the real world to clear the fog and discover hidden landmarks, parks, and historical sites.
+        <p className="text-blue-400 font-semibold animate-pulse max-w-sm">
+          Acquiring GPS Signal...
         </p>
-        <button 
-          onClick={startAppTracking} 
-          className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-2xl shadow-[0_0_30px_rgba(37,99,235,0.4)] transition-all active:scale-95 text-lg"
-        >
-          Start Exploring
-        </button>
       </div>
     );
   }

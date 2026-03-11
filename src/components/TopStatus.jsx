@@ -3,7 +3,7 @@ import { MapPin, User } from 'lucide-react';
 
 export default function TopStatus({ locationError, openProfile }) {
   return (
-    <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-start pointer-events-none">
+    <div className="absolute top-[max(1rem,env(safe-area-inset-top))] left-4 right-4 z-20 flex justify-between items-start pointer-events-none">
       <div className="bg-white/95 backdrop-blur-xl p-3 rounded-2xl shadow-xl border border-slate-100 pointer-events-auto">
         <h3 className="text-md font-bold text-slate-800 flex items-center gap-2">
           <MapPin className="text-blue-500" size={16} /> Fog World

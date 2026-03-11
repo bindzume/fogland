@@ -12,7 +12,7 @@ export default function BottomControls({
   debugMode // NEW PROP
 }) {
   return (
-    <div className="absolute bottom-6 left-4 right-4 z-20 flex justify-between items-end pointer-events-none">
+    <div className="absolute bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-4 right-4 z-20 flex justify-between items-end pointer-events-none">
       <div className="pointer-events-auto bg-white/95 backdrop-blur-xl p-3 rounded-3xl shadow-2xl border border-slate-100 flex flex-col gap-2">
         <button onClick={() => setGpsActive(!gpsActive)} className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl font-semibold transition-all active:scale-95 ${gpsActive ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'bg-slate-100 text-slate-600'}`}>
           <Crosshair size={18} className={gpsActive ? "animate-pulse" : ""} /> {gpsActive ? "Live GPS" : "GPS Off"}

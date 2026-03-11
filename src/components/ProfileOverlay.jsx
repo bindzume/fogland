@@ -40,7 +40,7 @@ export default function ProfileOverlay({
   };
 
   return (
-    <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur-md overflow-y-auto">
+    <div className="absolute inset-0 z-50 bg-slate-900/95 backdrop-blur-md overflow-y-auto pt-[max(1rem,env(safe-area-inset-top))]">
       <input type="file" ref={fileInputRef} onChange={handleImport} accept=".json" className="hidden" />
 
       {/* CONFIRMATION MODAL */}
@@ -60,7 +60,7 @@ export default function ProfileOverlay({
       <div className="max-w-lg mx-auto p-6 text-slate-100 pb-20">
         
         {/* HEADER */}
-        <div className="flex justify-between items-center mb-6 pt-4">
+        <div className="flex  justify-between items-center mb-6 pt-4">
           <h2 className="text-2xl font-bold flex items-center gap-2">
             <User className="text-blue-400" /> Profile
           </h2>
