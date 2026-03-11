@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, X, Globe, Activity, Backpack, Star, Trees, Download, Upload, Trash2, Settings, Bug, Plus, Tag, MapPin } from 'lucide-react';
+import { User, X, Globe, Activity, Backpack, Star, Trees, Download, Upload, Trash2, Settings, Bug, Plus, Tag, MapPin, Radar } from 'lucide-react';
 
 export default function ProfileOverlay({
   showProfile,
@@ -20,11 +20,15 @@ export default function ProfileOverlay({
   showOnlyWiki,
   debugMode,
   setDebugMode,
-  draftOsmTags, // NEW: Using draft state instead of active state
+  searchRadius,
+  setSearchRadius,
+  minSearchRadius,
+  maxSearchRadius,
+  draftOsmTags,
   toggleOsmTag,
   addOsmTag,
-  saveOsmTags, // NEW: Save function
-  resetOsmTags // NEW: Reset function
+  saveOsmTags,
+  resetOsmTags
 }) {
   const [newTagKey, setNewTagKey] = useState('');
   const [newTagValue, setNewTagValue] = useState('');
@@ -240,6 +244,33 @@ export default function ProfileOverlay({
                 >
                   <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${debugMode ? 'translate-x-6' : 'translate-x-0'}`}></div>
                 </button>
+              </div>
+            </div>
+
+            {/* Search Radius */}
+            <div className="bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700">
+              <h3 className="text-lg font-bold flex items-center gap-2 mb-4 text-blue-400">
+                <Radar size={20} /> Search Radius
+              </h3>
+              <p className="text-xs text-slate-400 mb-4">Controls the area searched for landmarks (both automatic and manual). Larger areas return more results but take longer and are more likely to hit rate limits.</p>
+              <div className="bg-slate-900/50 p-4 rounded-xl space-y-3">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-sm font-semibold text-white">~{(searchRadius * 111).toFixed(1)} km</span>
+                  <span className="text-xs text-slate-500">{(searchRadius * 111).toFixed(1)} x {(searchRadius * 111).toFixed(1)} km area</span>
+                </div>
+                <input
+                  type="range"
+                  min={minSearchRadius}
+                  max={maxSearchRadius}
+                  step={0.005}
+                  value={searchRadius}
+                  onChange={(e) => setSearchRadius(parseFloat(e.target.value))}
+                  className="w-full accent-blue-500"
+                />
+                <div className="flex justify-between text-[10px] text-slate-500">
+                  <span>~{(minSearchRadius * 111).toFixed(1)} km</span>
+                  <span>~{(maxSearchRadius * 111).toFixed(1)} km</span>
+                </div>
               </div>
             </div>
 

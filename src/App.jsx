@@ -47,7 +47,9 @@ function calcBBoxAreaKm2(bbox) {
   return heightKm * widthKm * 0.7;
 }
 
-const CHUNK_SIZE = 0.05; // ~5.5km chunks
+const DEFAULT_SEARCH_RADIUS = 0.05; // ~5.5km default
+const MIN_SEARCH_RADIUS = 0.01;     // ~1.1km minimum
+const MAX_SEARCH_RADIUS = 0.10;     // ~11km hard max to avoid rate limiting
 
 // Rate limiter for Overpass API — queues requests so they're spaced at least 1.5s apart
 const overpassRateLimiter = (() => {
@@ -204,6 +206,15 @@ export default function App() {
 
   // Settings States
   const [debugMode, setDebugMode] = useState(() => localStorage.getItem('fogWorldDebug') === 'true');
+  const [searchRadius, setSearchRadius] = useState(() => {
+    const saved = parseFloat(localStorage.getItem('fogWorldSearchRadius'));
+    return (saved >= MIN_SEARCH_RADIUS && saved <= MAX_SEARCH_RADIUS) ? saved : DEFAULT_SEARCH_RADIUS;
+  });
+  const searchRadiusRef = useRef(searchRadius);
+  useEffect(() => {
+    searchRadiusRef.current = searchRadius;
+    localStorage.setItem('fogWorldSearchRadius', searchRadius.toString());
+  }, [searchRadius]);
   
   // Active tags (Trigger Overpass fetch)
   const [osmTags, setOsmTags] = useState(() => {
@@ -499,8 +510,8 @@ const startAppTracking = async () => {
   const searchLandmarks = useCallback(() => {
     if (!currentPos || !Array.isArray(currentPos)) return;
     const [lat, lon] = currentPos;
-    const chunkLat = Math.floor(lat / CHUNK_SIZE) * CHUNK_SIZE;
-    const chunkLon = Math.floor(lon / CHUNK_SIZE) * CHUNK_SIZE;
+    const chunkLat = Math.floor(lat / searchRadiusRef.current) * searchRadiusRef.current;
+    const chunkLon = Math.floor(lon / searchRadiusRef.current) * searchRadiusRef.current;
     const chunkId = `osm_chunk_${chunkLat.toFixed(3)}_${chunkLon.toFixed(3)}`;
 
     console.log(`[Landmarks] Manual search triggered — clearing cache for ${chunkId}`);
@@ -519,8 +530,8 @@ const startAppTracking = async () => {
       const [lat, lon] = currentPos;
 
       // Calculate strict chunk grid boundaries
-      const chunkLat = Math.floor(lat / CHUNK_SIZE) * CHUNK_SIZE;
-      const chunkLon = Math.floor(lon / CHUNK_SIZE) * CHUNK_SIZE;
+      const chunkLat = Math.floor(lat / searchRadiusRef.current) * searchRadiusRef.current;
+      const chunkLon = Math.floor(lon / searchRadiusRef.current) * searchRadiusRef.current;
       const chunkId = `osm_chunk_${chunkLat.toFixed(3)}_${chunkLon.toFixed(3)}`;
 
       console.log(`[Landmarks] Position: [${lat.toFixed(5)}, ${lon.toFixed(5)}] → Chunk: ${chunkId}`);
@@ -532,6 +543,7 @@ const startAppTracking = async () => {
         return;
       }
 
+      setIsSearching(true);
       let rawElements = [];
 
       // --- 1. TRY CACHE FIRST ---
@@ -548,9 +560,9 @@ const startAppTracking = async () => {
       // --- 2. FETCH IF NOT CACHED ---
       if (rawElements.length === 0) {
         const minLat = chunkLat.toFixed(5);
-        const maxLat = (chunkLat + CHUNK_SIZE).toFixed(5);
+        const maxLat = (chunkLat + searchRadiusRef.current).toFixed(5);
         const minLon = chunkLon.toFixed(5);
-        const maxLon = (chunkLon + CHUNK_SIZE).toFixed(5);
+        const maxLon = (chunkLon + searchRadiusRef.current).toFixed(5);
 
         console.log(`[Landmarks] Fetching chunk from Overpass — bbox: [${minLat},${minLon},${maxLat},${maxLon}]`);
 
@@ -994,8 +1006,10 @@ const startAppTracking = async () => {
         fileInputRef={fileInputRef} showConfirmWipe={showConfirmWipe} setShowConfirmWipe={setShowConfirmWipe} executeClearData={executeClearData} 
         activeTab={activeTab} setActiveTab={setActiveTab} stats={stats} geoData={geoData} regionalAreas={regionalAreas} groupedBag={groupedBag} 
         visibleCollectedCount={Array.isArray(visibleCollected) ? visibleCollected.length : 0} showOnlyWiki={showOnlyWiki}
-        debugMode={debugMode} setDebugMode={setDebugMode} 
-        draftOsmTags={draftOsmTags} toggleOsmTag={toggleOsmTag} addOsmTag={addOsmTag} 
+        debugMode={debugMode} setDebugMode={setDebugMode}
+        searchRadius={searchRadius} setSearchRadius={setSearchRadius}
+        minSearchRadius={MIN_SEARCH_RADIUS} maxSearchRadius={MAX_SEARCH_RADIUS}
+        draftOsmTags={draftOsmTags} toggleOsmTag={toggleOsmTag} addOsmTag={addOsmTag}
         saveOsmTags={saveOsmTags} resetOsmTags={resetOsmTags}
       />
     </div>
