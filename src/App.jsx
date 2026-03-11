@@ -47,6 +47,72 @@ function calcBBoxAreaKm2(bbox) {
   return heightKm * widthKm * 0.7;
 }
 
+const CHUNK_SIZE = 0.05; // ~5.5km chunks
+
+// Rate limiter for Overpass API — queues requests so they're spaced at least 1.5s apart
+const overpassRateLimiter = (() => {
+  let lastRequestTime = 0;
+  const MIN_INTERVAL_MS = 1500;
+  let queue = Promise.resolve();
+
+  return () => {
+    queue = queue.then(() => {
+      const now = Date.now();
+      const elapsed = now - lastRequestTime;
+      if (elapsed < MIN_INTERVAL_MS) {
+        return new Promise(resolve => {
+          setTimeout(() => {
+            lastRequestTime = Date.now();
+            resolve();
+          }, MIN_INTERVAL_MS - elapsed);
+        });
+      }
+      lastRequestTime = Date.now();
+    });
+    return queue;
+  };
+})();
+
+// Custom fetcher that handles 429/503/504 with exponential backoff + rate limiting
+const fetchWithRetry = async (url, body, retries = 4, initialBackoff = 2000) => {
+  let backoff = initialBackoff;
+  for (let i = 0; i < retries; i++) {
+    await overpassRateLimiter();
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(body)}`
+      });
+
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const waitMs = retryAfter ? Math.max(parseInt(retryAfter, 10) * 1000, backoff) : backoff;
+        console.warn(`Overpass 429 (attempt ${i + 1}/${retries}). Waiting ${waitMs}ms...`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        backoff *= 2;
+        continue;
+      }
+
+      if (response.status === 503 || response.status === 504) {
+        console.warn(`Overpass ${response.status} (attempt ${i + 1}/${retries}). Retrying in ${backoff}ms...`);
+        await new Promise(resolve => setTimeout(resolve, backoff));
+        backoff *= 2;
+        continue;
+      }
+
+      if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+      return await response.json();
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      console.warn(`Overpass fetch failed (attempt ${i + 1}/${retries}). Retrying in ${backoff}ms...`);
+      await new Promise(resolve => setTimeout(resolve, backoff));
+      backoff *= 2;
+    }
+  }
+};
+
 export default function App() {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -55,6 +121,7 @@ export default function App() {
   const watchIdRef = useRef(null);
   const fileInputRef = useRef(null);
   const lastReportedPosRef = useRef(null);
+  const loadedChunksRef = useRef(new Set());
 
   const pathRef = useRef([]);
   const visitedCellsRef = useRef(new Set());
@@ -63,7 +130,8 @@ export default function App() {
   const nearbyLandmarksRef = useRef([]);
   const collectedLandmarksRef = useRef([]);
 
-  const [currentPos, setCurrentPos] = useState(null);
+  const [currentPos, setCurrentPos] = useState([FALLBACK_LAT, FALLBACK_LNG]);
+  const [gpsFailed, setGpsFailed] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
   const [locationError, setLocationError] = useState('');
   const [gpsActive, setGpsActive] = useState(true);
@@ -155,60 +223,41 @@ export default function App() {
       }
     } catch (e) {}
 
-    // NEW: Check Permissions instead of blindly requesting GPS
-    if (navigator.permissions) {
-      navigator.permissions.query({ name: 'geolocation' }).then((result) => {
-        setPermissionState(result.state);
-        if (result.state === 'granted') {
-          // If already granted in a previous session, we can safely auto-start
-          startAppTracking();
-        } else {
-          setPermissionState('prompt');
-        }
-      });
-    } else {
-      // Fallback for Safari/Older browsers
-      setPermissionState('prompt');
-    }
+    startAppTracking();
   }, []);
 
   // NEW: The function that triggers the GPS request (Satisfies User Gesture)
-  const startAppTracking = async () => {
+const startAppTracking = async () => {
     setAppStarted(true);
     setIsLocating(true);
-    await KeepAwake.keepAwake();
+    setGpsFailed(false); // Clear previous errors on retry
+    setLocationError('');
+    
+    try { await KeepAwake.keepAwake(); } catch (e) {}
     
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          setGpsActive(true); // Turn tracking back on if it was previously off
           handleNewLocation([position.coords.latitude, position.coords.longitude]);
           setIsLocating(false);
           setPermissionState('granted');
         },
         (error) => {
           console.warn("Raw GPS Error:", error.code, error.message);
-          
-          // Translate the cryptic error codes if the message is blank
           let errorDesc = "Unknown Error";
-          if (error.code === 1) errorDesc = "Permission Denied (Check browser or OS location settings)";
-          if (error.code === 2) errorDesc = "Position Unavailable (No signal or disabled by OS)";
-          if (error.code === 3) errorDesc = "Timeout (Took too long to find location)";
+          if (error.code === 1) errorDesc = "Permission Denied";
+          if (error.code === 2) errorDesc = "Position Unavailable";
+          if (error.code === 3) errorDesc = "Timeout";
 
-          const finalMessage = error.message || errorDesc;
-          
-          setLocationError(`GPS Error: ${finalMessage}. Using fallback.`);
-          handleNewLocation([FALLBACK_LAT, FALLBACK_LNG]);
+          setLocationError(`GPS Error: ${errorDesc}`);
           setIsLocating(false);
           setGpsActive(false);
+          setGpsFailed(true); // Trigger the Retry Button!
           setPermissionState('denied');
         },
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 } // Added a 10s timeout
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
       );
-    } else {
-      setLocationError("Geolocation not supported by this browser.");
-      handleNewLocation([FALLBACK_LAT, FALLBACK_LNG]);
-      setIsLocating(false);
-      setGpsActive(false);
     }
   };
 
@@ -407,110 +456,141 @@ export default function App() {
     } catch (err) {}
   }, [drawFog]);
 
-  // 3. Fetch Nearby Landmarks
+  
+
+  // 3. Fetch Nearby Landmarks (Chunk Cached + Retry Enabled)
   useEffect(() => {
     if (!currentPos || !Array.isArray(currentPos)) return;
 
-    const needsFetch = !lastFetchBoxRef.current ||
-      currentPos[0] < lastFetchBoxRef.current.minLat ||
-      currentPos[0] > lastFetchBoxRef.current.maxLat ||
-      currentPos[1] < lastFetchBoxRef.current.minLon ||
-      currentPos[1] > lastFetchBoxRef.current.maxLon;
-
-    if (needsFetch) {
+    const loadLandmarks = async () => {
       const [lat, lon] = currentPos;
-      lastFetchBoxRef.current = {
-        minLat: lat - VIEW_HALF_SIZE, maxLat: lat + VIEW_HALF_SIZE,
-        minLon: lon - VIEW_HALF_SIZE, maxLon: lon + VIEW_HALF_SIZE
-      };
+      
+      // Calculate strict chunk grid boundaries
+      const chunkLat = Math.floor(lat / CHUNK_SIZE) * CHUNK_SIZE;
+      const chunkLon = Math.floor(lon / CHUNK_SIZE) * CHUNK_SIZE;
+      const chunkId = `osm_chunk_${chunkLat.toFixed(3)}_${chunkLon.toFixed(3)}`;
 
-      const fetchMinLat = (lat - VIEW_HALF_SIZE * 2).toFixed(5);
-      const fetchMaxLat = (lat + VIEW_HALF_SIZE * 2).toFixed(5);
-      const fetchMinLon = (lon - VIEW_HALF_SIZE * 2).toFixed(5);
-      const fetchMaxLon = (lon + VIEW_HALF_SIZE * 2).toFixed(5);
+      // If we already processed this chunk during this app session, skip!
+      if (loadedChunksRef.current.has(chunkId)) return;
 
-      let dynamicNodes = '';
-      Object.entries(osmTags).forEach(([key, valuesObj]) => {
-        const activeValues = Object.entries(valuesObj).filter(([_, isActive]) => isActive).map(([v]) => v);
-        if (activeValues.length > 0) {
-          dynamicNodes += `  nwr["${key}"~"${activeValues.join('|')}"](${fetchMinLat},${fetchMinLon},${fetchMaxLat},${fetchMaxLon});\n`;
+      let rawElements = [];
+
+      // --- 1. TRY CACHE FIRST ---
+      try {
+        const cached = localStorage.getItem(chunkId);
+        if (cached) {
+          rawElements = JSON.parse(cached);
+          console.log(`Loaded ${rawElements.length} elements from CACHE for ${chunkId}`);
         }
-      });
+      } catch (e) { console.warn("Cache read error"); }
 
-      if (!dynamicNodes) {
-        setNearbyLandmarks([]);
-        return;
+      // --- 2. FETCH IF NOT CACHED ---
+      if (rawElements.length === 0) {
+        console.log(`Fetching NEW chunk from Overpass: ${chunkId}`);
+        const minLat = chunkLat.toFixed(5);
+        const maxLat = (chunkLat + CHUNK_SIZE).toFixed(5);
+        const minLon = chunkLon.toFixed(5);
+        const maxLon = (chunkLon + CHUNK_SIZE).toFixed(5);
+
+        let dynamicNodes = '';
+        Object.entries(osmTags).forEach(([key, valuesObj]) => {
+          const activeValues = Object.entries(valuesObj).filter(([_, isActive]) => isActive).map(([v]) => v);
+          if (activeValues.length > 0) {
+            dynamicNodes += `  nwr["${key}"~"${activeValues.join('|')}"](${minLat},${minLon},${maxLat},${maxLon});\n`;
+          }
+        });
+
+        if (!dynamicNodes) {
+          setNearbyLandmarks([]);
+          return;
+        }
+
+        const query = `[out:json][timeout:25];\n(\n${dynamicNodes});\nout center bb;`;
+
+        try {
+          const data = await fetchWithRetry('https://overpass-api.de/api/interpreter', query);
+          if (data && data.elements) {
+            rawElements = data.elements;
+            
+            // Save to LocalStorage to prevent ever querying this 5km area again
+            try {
+              const dataString = JSON.stringify(rawElements);
+              // Safety limit to prevent exceeding browser quota (2MB limit check)
+              if (dataString.length < 2000000) localStorage.setItem(chunkId, dataString);
+            } catch (e) { console.warn("Cache full"); }
+          }
+        } catch (err) {
+          console.error("Overpass Fetch & Retries Failed:", err);
+          return; // Abort processing if fetch failed entirely
+        }
       }
 
-      const query = `[out:json][timeout:25];\n(\n${dynamicNodes});\nout center bb;`;
+      // --- 3. PROCESS DATA (Your exact original logic) ---
+      if (rawElements.length > 0) {
+        const items = rawElements
+          .filter(e => e.tags && e.tags.name)
+          .map(e => {
+            const isBoundaryType = e.tags.leisure || e.tags.boundary || (e.tags.historic && e.bounds);
+            const isBoundary = isBoundaryType && !!e.bounds;
 
-      fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(query)}`
-      })
-        .then(res => res.json())
-        .then(data => {
-          if (data && data.elements) {
-            const items = data.elements
-              .filter(e => e.tags && e.tags.name)
-              .map(e => {
-                const isBoundaryType = e.tags.leisure || e.tags.boundary || (e.tags.historic && e.bounds);
-                const isBoundary = isBoundaryType && !!e.bounds;
+            let progressCount = 0;
+            let requiredCells = 0;
 
-                let progressCount = 0;
-                let requiredCells = 0;
+            if (isBoundary) {
+              const widthCells = Math.abs(e.bounds.maxlon - e.bounds.minlon) / CELL_SIZE;
+              const heightCells = Math.abs(e.bounds.maxlat - e.bounds.minlat) / CELL_SIZE;
+              requiredCells = Math.max(1, Math.min(100, Math.floor((widthCells * heightCells) * MIN_EXPLORE_PERCENT)));
 
-                if (isBoundary) {
-                  const widthCells = Math.abs(e.bounds.maxlon - e.bounds.minlon) / CELL_SIZE;
-                  const heightCells = Math.abs(e.bounds.maxlat - e.bounds.minlat) / CELL_SIZE;
-                  requiredCells = Math.max(1, Math.min(100, Math.floor((widthCells * heightCells) * MIN_EXPLORE_PERCENT)));
-
-                  for (let c of visitedCellsRef.current) {
-                    const [cLatStr, cLonStr] = c.split('_');
-                    const centerLat = (parseInt(cLatStr) + 0.5) * CELL_SIZE;
-                    const centerLon = (parseInt(cLonStr) + 0.5) * CELL_SIZE;
-                    if (centerLat >= e.bounds.minlat && centerLat <= e.bounds.maxlat && centerLon >= e.bounds.minlon && centerLon <= e.bounds.maxlon) {
-                      progressCount++;
-                    }
-                  }
+              for (let c of visitedCellsRef.current) {
+                const [cLatStr, cLonStr] = c.split('_');
+                const centerLat = (parseInt(cLatStr) + 0.5) * CELL_SIZE;
+                const centerLon = (parseInt(cLonStr) + 0.5) * CELL_SIZE;
+                if (centerLat >= e.bounds.minlat && centerLat <= e.bounds.maxlat && centerLon >= e.bounds.minlon && centerLon <= e.bounds.maxlon) {
+                  progressCount++;
                 }
+              }
+            }
 
-                let computedLat = e.lat || (e.center && e.center.lat) || (e.bounds && (e.bounds.minlat + e.bounds.maxlat) / 2);
-                let computedLon = e.lon || (e.center && e.center.lon) || (e.bounds && (e.bounds.minlon + e.bounds.maxlon) / 2);
+            let computedLat = e.lat || (e.center && e.center.lat) || (e.bounds && (e.bounds.minlat + e.bounds.maxlat) / 2);
+            let computedLon = e.lon || (e.center && e.center.lon) || (e.bounds && (e.bounds.minlon + e.bounds.maxlon) / 2);
 
-                let rawType = 'Landmark';
-                const keyPriorities = ['natural', 'historic', 'man_made', 'tourism', 'amenity', 'leisure', 'boundary'];
-                for (let k of keyPriorities) {
-                  if (e.tags[k]) { rawType = e.tags[k]; break; }
-                }
+            let rawType = 'Landmark';
+            const keyPriorities = ['natural', 'historic', 'man_made', 'tourism', 'amenity', 'leisure', 'boundary'];
+            for (let k of keyPriorities) {
+              if (e.tags[k]) { rawType = e.tags[k]; break; }
+            }
 
-                const specificType = rawType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                let wikiLink = null;
-                if (e.tags.wikipedia) {
-                  const parts = e.tags.wikipedia.split(':');
-                  if (parts.length === 2) wikiLink = `https://${parts[0]}.wikipedia.org/wiki/${encodeURIComponent(parts[1])}`;
-                }
+            const specificType = rawType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            let wikiLink = null;
+            if (e.tags.wikipedia) {
+              const parts = e.tags.wikipedia.split(':');
+              if (parts.length === 2) wikiLink = `https://${parts[0]}.wikipedia.org/wiki/${encodeURIComponent(parts[1])}`;
+            }
 
-                return {
-                  id: e.id, name: e.tags.name, lat: computedLat, lon: computedLon,
-                  type: isBoundaryType ? 'park/boundary' : 'point', specificType, 
-                  description: e.tags.description || null, wikipedia: wikiLink, 
-                  isBoundary, bounds: e.bounds, progressCount, requiredCells,
-                };
-              })
-              .filter(e => e.lat != null && e.lon != null);
+            return {
+              id: e.id, name: e.tags.name, lat: computedLat, lon: computedLon,
+              type: isBoundaryType ? 'park/boundary' : 'point', specificType, 
+              description: e.tags.description || null, wikipedia: wikiLink, 
+              isBoundary, bounds: e.bounds, progressCount, requiredCells,
+            };
+          })
+          .filter(e => e.lat != null && e.lon != null);
 
-            setNearbyLandmarks(prev => {
-              const map = new Map();
-              prev.forEach(lm => { if (getDistanceKm(currentPos[0], currentPos[1], lm.lat, lm.lon) < 10) map.set(lm.id, lm); });
-              items.forEach(lm => map.set(lm.id, lm));
-              return Array.from(map.values());
-            });
-          }
-        })
-        .catch(err => console.error("Overpass Fetch Failed:", err));
-    }
+        // --- 4. UPDATE STATE ---
+        setNearbyLandmarks(prev => {
+          const map = new Map();
+          // Keep old landmarks up to 15km away so they don't pop-out when crossing chunk lines
+          prev.forEach(lm => { if (getDistanceKm(currentPos[0], currentPos[1], lm.lat, lm.lon) < 15) map.set(lm.id, lm); });
+          items.forEach(lm => map.set(lm.id, lm));
+          return Array.from(map.values());
+        });
+
+        // Mark chunk as successfully processed for this session
+        loadedChunksRef.current.add(chunkId);
+      }
+    };
+
+    loadLandmarks();
   }, [currentPos, osmTags]);
 
 // 4. Collect Nearby Landmarks
@@ -758,28 +838,6 @@ export default function App() {
     acc[c][s][city].push(lm); return acc;
   }, {}) : {};
 
-// Show a loading screen while waiting for the initial GPS lock or permissions
-  if (!currentPos || !appStarted) {
-    appStarted || startAppTracking(); // Ensure we trigger the GPS request on first load
-    return (
-      <div className="flex flex-col items-center justify-center w-full h-screen bg-slate-900 text-white p-6 text-center">
-        <MapPin className="text-blue-500 animate-bounce mb-6" size={64} />
-        <h1 className="text-4xl font-bold mb-4">Fog World</h1>
-        <p className="text-blue-400 font-semibold animate-pulse max-w-sm">
-          Acquiring GPS Signal...
-        </p>
-      </div>
-    );
-  }
-
-  if (isLocating) {
-    return (
-      <div className="flex flex-col items-center justify-center w-full h-screen bg-slate-900 text-white">
-        <Navigation className="animate-bounce mb-4 text-blue-500" size={40} />
-        <h2 className="text-xl font-bold">Acquiring GPS Signal...</h2>
-      </div>
-    );
-  }
 
   return (
     <div className="relative w-full h-screen overflow-hidden bg-slate-900 font-sans">
@@ -795,6 +853,22 @@ export default function App() {
       <canvas ref={canvasRef} className="absolute inset-0 z-10 w-full h-full pointer-events-none" />
 
       <TopStatus locationError={locationError} openProfile={openProfile} />
+      {/* Subtle Loading Indicator (Shows while hunting for GPS) */}
+      {isLocating && (
+        <div className="absolute top-[80px] left-4 z-20 bg-slate-800/90 text-blue-400 px-4 py-2 rounded-full shadow-lg border border-slate-700 flex items-center gap-2 font-bold animate-pulse backdrop-blur-md">
+          <Navigation size={18} className="animate-spin" /> Locating...
+        </div>
+      )}
+
+      {/* GPS Retry Button (Shows only if location fails/is denied) */}
+      {gpsFailed && !isLocating && (
+        <button 
+          onClick={startAppTracking}
+          className="absolute top-[80px] left-4 z-20 bg-red-600/90 hover:bg-red-500 text-white px-5 py-3 rounded-2xl shadow-[0_0_20px_rgba(220,38,38,0.4)] flex items-center gap-2 font-bold transition-all active:scale-95 backdrop-blur-md"
+        >
+          <MapPin size={20} /> Retry Location
+        </button>
+      )}
       {/* Recenter Button - Only shows when user has panned away */}
       {!isTracking && (
         <button 
