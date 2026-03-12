@@ -958,8 +958,9 @@ const startAppTracking = async () => {
 
       <TopStatus locationError={locationError} openProfile={openProfile} />
       {/* Subtle Loading Indicator (Shows while hunting for GPS) */}
+{/* Subtle Loading Indicator (Shows while hunting for GPS) */}
       {isLocating && (
-        <div className="absolute top-[80px] left-4 z-20 bg-slate-800/90 text-blue-400 px-4 py-2 rounded-full shadow-lg border border-slate-700 flex items-center gap-2 font-bold animate-pulse backdrop-blur-md">
+        <div className="absolute top-[calc(max(1rem,env(safe-area-inset-top))+4.5rem)] left-4 z-20 bg-slate-800/90 text-blue-400 px-4 py-2 rounded-full shadow-lg border border-slate-700 flex items-center gap-2 font-bold animate-pulse backdrop-blur-md">
           <Navigation size={18} className="animate-spin" /> Locating...
         </div>
       )}
@@ -968,7 +969,7 @@ const startAppTracking = async () => {
       {gpsFailed && !isLocating && (
         <button 
           onClick={startAppTracking}
-          className="absolute top-[80px] left-4 z-20 bg-red-600/90 hover:bg-red-500 text-white px-5 py-3 rounded-2xl shadow-[0_0_20px_rgba(220,38,38,0.4)] flex items-center gap-2 font-bold transition-all active:scale-95 backdrop-blur-md"
+          className="absolute top-[calc(max(1rem,env(safe-area-inset-top))+4.5rem)] left-4 z-20 bg-red-600/90 hover:bg-red-500 text-white px-5 py-3 rounded-2xl shadow-[0_0_20px_rgba(220,38,38,0.4)] flex items-center gap-2 font-bold transition-all active:scale-95 backdrop-blur-md"
         >
           <MapPin size={20} /> Retry Location
         </button>
