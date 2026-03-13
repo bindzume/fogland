@@ -182,6 +182,8 @@ export default function App() {
   const [appStarted, setAppStarted] = useState(false);
   const [permissionState, setPermissionState] = useState('checking'); // 'checking', 'prompt', 'granted', 'denied'
 
+  const [needsCompassPermission, setNeedsCompassPermission] = useState(false);
+
   // Core App States
   const [showTeleportModal, setShowTeleportModal] = useState(false);
   const [teleportQuery, setTeleportQuery] = useState('');
@@ -202,6 +204,8 @@ export default function App() {
   const [nearbyLandmarks, setNearbyLandmarks] = useState([]);
   const [collectedLandmarks, setCollectedLandmarks] = useState([]);
   const [justCollected, setJustCollected] = useState(null);
+
+  const [heading, setHeading] = useState(0);
 
   const [isTracking, setIsTracking] = useState(true);
   // NEW: Add a ref to safely read this inside our map functions
@@ -409,6 +413,80 @@ const startAppTracking = async () => {
     };
   }, [gpsActive, isLocating, appStarted]);
 
+  // 3. Watch Compass Heading
+  useEffect(() => {
+    const handleOrientation = (event) => {
+      let compassHeading = null;
+      if (event.webkitCompassHeading) compassHeading = event.webkitCompassHeading;
+      else if (event.alpha !== null) compassHeading = 360 - event.alpha;
+      
+      if (compassHeading !== null) setHeading(compassHeading);
+    };
+
+    // CHECK FOR IOS GESTURE REQUIREMENT
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      // This is an iPhone. We MUST wait for a button click.
+      setNeedsCompassPermission(true);
+    } else if (window.DeviceOrientationEvent) {
+      // This is Android or standard web. No button click needed!
+      window.addEventListener('deviceorientationabsolute', handleOrientation);
+      window.addEventListener('deviceorientation', handleOrientation);
+    }
+
+    return () => {
+      window.removeEventListener('deviceorientationabsolute', handleOrientation);
+      window.removeEventListener('deviceorientation', handleOrientation);
+    };
+  }, []);
+
+  // 4. Update Marker Rotation (The Flashlight Effect)
+  useEffect(() => {
+    // Make sure the marker actually exists on the map first
+    if (!markerRef.current) return;
+
+    // Create the dynamic icon using the current 'heading' state
+    const dynamicUserIcon = window.L.divIcon({
+      className: 'custom-div-icon',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12], // Centered so it spins perfectly on its axis
+      html: `
+  <div style="position: relative; width: 24px; height: 24px; transform: rotate(${heading}deg); transition: transform 0.1s linear;">
+    
+    <div style="
+      position: absolute; 
+      top: -55px;             /* Pulled further up */
+      left: -18px; 
+      width: 0; 
+      height: 0; 
+      border-left: 30px solid transparent; 
+      border-right: 30px solid transparent; 
+      border-top: 65px solid rgba(59, 130, 246, 0.4); /* Slightly taller and darker */
+      border-radius: 40%;    /* Softens the tip and the wide edge */
+      z-index: -1;           /* Sends it behind the white border of the dot */
+      pointer-events: none;
+    "></div>
+    
+    <div style="
+      position: absolute; 
+      top: 4px; 
+      left: 4px; 
+      background-color: #3b82f6; 
+      width: 16px; 
+      height: 16px; 
+      border-radius: 50%; 
+      border: 3px solid white; 
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+      z-index: 1;
+    "></div>
+    
+  </div>
+`
+    });
+
+    // Apply the newly rotated icon to your existing map marker
+    markerRef.current.setIcon(dynamicUserIcon);
+
+  }, [heading]); // Re-run this exactly when the compass heading changes
 
   // Drawing Fog
   const drawFog = useCallback(() => {
@@ -873,8 +951,19 @@ const startAppTracking = async () => {
         const map = window.L.map(mapContainerRef.current, { zoomControl: false, attributionControl: false, doubleClickZoom: false }).setView(currentPos, BASE_ZOOM);
         window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-        const userIcon = window.L.divIcon({ className: 'custom-div-icon', html: `<div style="background-color: #3b82f6; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
-        markerRef.current = window.L.marker(currentPos, { icon: userIcon }).addTo(map);
+        // FIX: Create an initial dynamic icon so the map doesn't crash looking for 'userIcon'
+        const initialIcon = window.L.divIcon({
+          className: 'custom-div-icon',
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+          html: `
+            <div style="position: relative; width: 24px; height: 24px; transform: rotate(0deg); transition: transform 0.1s linear;">
+              <div style="position: absolute; top: -45px; left: -18px; width: 0; height: 0; border-left: 30px solid transparent; border-right: 30px solid transparent; border-top: 60px solid rgba(59, 130, 246, 0.35); border-radius: 50%; pointer-events: none;"></div>
+              <div style="position: absolute; top: 4px; left: 4px; background-color: #3b82f6; width: 16px; height: 16px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>
+            </div>
+          `
+        });
+        markerRef.current = window.L.marker(currentPos, { icon: initialIcon }).addTo(map);
         mapInstanceRef.current = map; setMapReady(true);
         map.on('move', drawFog); map.on('zoom', drawFog); window.addEventListener('resize', drawFog);
 
@@ -1083,6 +1172,24 @@ const startAppTracking = async () => {
   }, {}) : {};
 
 
+  // 🧭 The iOS "User Gesture" trigger for the compass
+  const requestCompassPermission = async () => {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const permissionState = await DeviceOrientationEvent.requestPermission();
+        if (permissionState === 'granted') {
+          setNeedsCompassPermission(false);
+          // Now that permission is granted, the event listeners will actually work!
+        } else {
+          alert("Compass access was denied. You won't see the direction flashlight.");
+        }
+      } catch (error) {
+        console.error("Compass permission error:", error);
+      }
+    }
+  };
+
+
   return (
     <div className="relative w-full h-[100dvh] overflow-hidden bg-slate-900 font-sans">
       {justCollected && (
@@ -1098,22 +1205,38 @@ const startAppTracking = async () => {
 
       <TopStatus locationError={locationError} openProfile={openProfile} />
       {/* Subtle Loading Indicator (Shows while hunting for GPS) */}
-{/* Subtle Loading Indicator (Shows while hunting for GPS) */}
-      {isLocating && (
-        <div className="absolute top-[calc(max(1rem,env(safe-area-inset-top))+4.5rem)] left-4 z-20 bg-slate-800/90 text-blue-400 px-4 py-2 rounded-full shadow-lg border border-slate-700 flex items-center gap-2 font-bold animate-pulse backdrop-blur-md">
-          <Navigation size={18} className="animate-spin" /> Locating...
-        </div>
-      )}
+{/* ⚠️ SYSTEM WARNINGS & RETRY BUTTONS ⚠️ */}
+      {/* Wrapped in a flex column so they stack neatly on the left side */}
+      <div className="absolute top-[calc(max(1rem,env(safe-area-inset-top))+4.5rem)] left-4 z-20 flex flex-col gap-3 items-start pointer-events-none">
+        
+        {/* Subtle Loading Indicator */}
+        {isLocating && (
+          <div className="pointer-events-auto bg-slate-800/90 text-blue-400 px-4 py-2 rounded-full shadow-lg border border-slate-700 flex items-center gap-2 font-bold animate-pulse backdrop-blur-md">
+            <Navigation size={18} className="animate-spin" /> Locating...
+          </div>
+        )}
 
-      {/* GPS Retry Button (Shows only if location fails/is denied) */}
-      {gpsFailed && !isLocating && (
-        <button 
-          onClick={startAppTracking}
-          className="absolute top-[calc(max(1rem,env(safe-area-inset-top))+4.5rem)] left-4 z-20 bg-red-600/90 hover:bg-red-500 text-white px-5 py-3 rounded-2xl shadow-[0_0_20px_rgba(220,38,38,0.4)] flex items-center gap-2 font-bold transition-all active:scale-95 backdrop-blur-md"
-        >
-          <MapPin size={20} /> Retry Location
-        </button>
-      )}
+        {/* GPS Retry Button */}
+        {gpsFailed && !isLocating && (
+          <button 
+            onClick={startAppTracking}
+            className="pointer-events-auto bg-red-600/90 hover:bg-red-500 text-white px-5 py-3 rounded-2xl shadow-[0_0_20px_rgba(220,38,38,0.4)] flex items-center gap-2 font-bold transition-all active:scale-95 backdrop-blur-md"
+          >
+            <MapPin size={20} /> Retry Location
+          </button>
+        )}
+
+        {/* NEW: iOS Compass Calibration Button */}
+        {needsCompassPermission && !isLocating && (
+          <button 
+            onClick={requestCompassPermission}
+            className="pointer-events-auto bg-blue-600/90 hover:bg-blue-500 text-white px-5 py-3 rounded-2xl shadow-[0_0_20px_rgba(59,130,246,0.4)] flex items-center gap-2 font-bold transition-all active:scale-95 backdrop-blur-md"
+          >
+            <Navigation size={20} /> Calibrate Compass
+          </button>
+        )}
+
+      </div>
       {/* Recenter Button - Only shows when user has panned away */}
       {!isTracking && (
         <button 
