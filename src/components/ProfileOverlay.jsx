@@ -314,28 +314,60 @@ export default function ProfileOverlay({
                 </button>
               </form>
 
-              {/* Render Tag Categories (NEW: Mapping over draftOsmTags) */}
-              <div className="space-y-4">
-                {Object.entries(draftOsmTags).map(([category, valuesObj]) => (
-                  <div key={category} className="border-l-2 border-slate-600 pl-3">
-                    <h4 className="text-sm font-bold text-slate-300 mb-2 uppercase tracking-wider">{category}</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.entries(valuesObj).map(([val, isActive]) => (
-                        <button
-                          key={val}
-                          onClick={() => toggleOsmTag(category, val)}
-                          className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
-                            isActive 
-                            ? 'bg-blue-500/20 border-blue-500/50 text-blue-300 hover:bg-blue-500/30' 
-                            : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-400 hover:border-slate-500'
-                          }`}
-                        >
-                          {val}
-                        </button>
-                      ))}
+              {/* Render Tag Categories (Smart 'All' Master Toggle) */}
+              <div className="space-y-6">
+                {Object.entries(draftOsmTags).map(([category, valuesObj]) => {
+                  // NEW: Separate the "all" tag from the specific sub-tags
+                  const isAllActive = valuesObj.all;
+                  const specificTags = Object.entries(valuesObj).filter(([val]) => val !== 'all');
+
+                  return (
+                    <div key={category} className="border-l-2 border-slate-600 pl-3">
+                      <h4 className="text-sm font-bold text-slate-300 mb-3 uppercase tracking-wider">
+                        {category}
+                      </h4>
+                      
+                      {/* 1. THE DEDICATED "ALL" MASTER SWITCH */}
+                      <button
+                        onClick={() => toggleOsmTag(category, 'all')}
+                        className={`w-full text-left mb-3 p-3 rounded-xl border transition-all flex flex-col gap-1.5 ${
+                          isAllActive 
+                          ? 'bg-blue-600/20 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]' 
+                          : 'bg-slate-800/50 border-slate-700 hover:border-slate-500'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">{isAllActive ? '🌟' : '⭐'}</span>
+                          <span className={`font-bold ${isAllActive ? 'text-blue-300' : 'text-slate-300'}`}>
+                            All {category} (*)
+                          </span>
+                        </div>
+                        <span className={`text-[10px] leading-snug ${isAllActive ? 'text-blue-200/80' : 'text-slate-500'}`}>
+                          Fetch every single "{category}" feature in OpenStreetMap, including unlisted sub-categories.
+                        </span>
+                      </button>
+
+                      {/* 2. THE SPECIFIC SUB-TAGS (Grays out if 'All' is active!) */}
+                      <div className={`flex flex-wrap gap-2 transition-opacity duration-300 ${isAllActive ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}>
+                        {specificTags.map(([val, isActive]) => (
+                          <button
+                            key={val}
+                            onClick={() => toggleOsmTag(category, val)}
+                            className={`text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
+                              isActive 
+                              ? 'bg-blue-500/20 border-blue-500/50 text-blue-300 hover:bg-blue-500/30' 
+                              : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-400 hover:border-slate-500'
+                            }`}
+                          >
+                            {/* Replaces underscores with spaces so tags like "water_park" look nice */}
+                            {val.replace(/_/g, ' ')}
+                          </button>
+                        ))}
+                      </div>
+                      
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
             </div>

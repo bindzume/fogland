@@ -19,13 +19,13 @@ const FALLBACK_LAT = 37.7799;
 const FALLBACK_LNG = -121.9780;
 
 const DEFAULT_OSM_TAGS = {
-  tourism: { museum: true, attraction: true, viewpoint: true, gallery: true, artwork: true, zoo: true, aquarium: true, yes: true },
-  historic: { monument: true, memorial: true, ruins: true, castle: true, archaeological_site: true, ship: true },
-  natural: { peak: true, waterfall: true, cave_entrance: true, spring: true },
-  man_made: { lighthouse: true, windmill: true, obelisk: true, watermill: true, tower: true },
-  amenity: { fountain: true, clock: true },
-  leisure: { park: true, nature_reserve: true, water_park: true, garden: true, stadium: true, marina: true },
-  boundary: { protected_area: true, national_park: true }
+  tourism: { all:false, museum: true, attraction: true, viewpoint: true, gallery: true, artwork: true, zoo: true, aquarium: true, yes: true },
+  historic: { all:false,monument: true, memorial: true, ruins: true, castle: true, archaeological_site: true, ship: true},
+  natural: { all:false,peak: true, waterfall: true, cave_entrance: true, spring: true },
+  man_made: { all:false,lighthouse: true, windmill: true, obelisk: true, watermill: true, tower: true },
+  amenity: { all:false,fountain: true, clock: true },
+  leisure: { all:false,park: true, nature_reserve: true, water_park: true, garden: true, stadium: true, marina: true },
+  boundary: { all:false,protected_area: true, national_park: true }
 };
 
 function getDistanceKm(lat1, lon1, lat2, lon2) {
@@ -569,10 +569,21 @@ const startAppTracking = async () => {
         let dynamicNodes = '';
         const activeTagSummary = [];
         Object.entries(osmTags).forEach(([key, valuesObj]) => {
-          const activeValues = Object.entries(valuesObj).filter(([_, isActive]) => isActive).map(([v]) => v);
-          if (activeValues.length > 0) {
-            dynamicNodes += `  nwr["${key}"~"${activeValues.join('|')}"](${minLat},${minLon},${maxLat},${maxLon});\n`;
-            activeTagSummary.push(`${key}:[${activeValues.join(',')}]`);
+          // NEW: If "all" is checked, fetch EVERY tag under this category (e.g., tourism:*)
+          if (valuesObj.all) {
+            dynamicNodes += `  nwr["${key}"](${minLat},${minLon},${maxLat},${maxLon});\n`;
+            activeTagSummary.push(`${key}:[ALL]`);
+          } 
+          // Otherwise, only fetch the specifically active tags
+          else {
+            const activeValues = Object.entries(valuesObj)
+              .filter(([valKey, isActive]) => isActive && valKey !== 'all') // Exclude 'all' from the standard list
+              .map(([v]) => v);
+              
+            if (activeValues.length > 0) {
+              dynamicNodes += `  nwr["${key}"~"${activeValues.join('|')}"](${minLat},${minLon},${maxLat},${maxLon});\n`;
+              activeTagSummary.push(`${key}:[${activeValues.join(',')}]`);
+            }
           }
         });
 
@@ -895,15 +906,33 @@ const startAppTracking = async () => {
     if (local) { setTimeout(async () => { const lArea = await fetchBBoxArea(`${local}, ${state}, ${country}`); if (lArea) setRegionalAreas(prev => ({ ...prev, local: lArea })); }, 1200); }
   };
 
-  // NEW: Update draft tags instead of triggering a live save
-  const toggleOsmTag = (category, value) => {
-    setDraftOsmTags(prev => ({
-      ...prev,
-      [category]: {
-        ...prev[category],
-        [value]: !prev[category][value]
+// NEW: Smart tag toggle (mutually exclusive "all" logic)
+  const toggleOsmTag = (category, key) => {
+    setDraftOsmTags(prev => {
+      const updatedCategory = { ...prev[category] };
+      const isCurrentlyOn = updatedCategory[key];
+
+      if (key === 'all') {
+        if (!isCurrentlyOn) {
+          // Turning 'all' ON -> Turn specific tags OFF
+          Object.keys(updatedCategory).forEach(k => updatedCategory[k] = false);
+          updatedCategory.all = true;
+        } else {
+          updatedCategory.all = false;
+        }
+      } else {
+        // Turning specific tag ON -> Turn 'all' OFF
+        updatedCategory[key] = !isCurrentlyOn;
+        if (updatedCategory[key]) {
+          updatedCategory.all = false;
+        }
       }
-    }));
+
+      return {
+        ...prev,
+        [category]: updatedCategory
+      };
+    });
   };
 
   // NEW: Update draft tags instead of triggering a live save
@@ -924,10 +953,37 @@ const startAppTracking = async () => {
     return true;
   };
 
-  // NEW: Master push to live state
+// NEW: Check if tags expanded (requires fetch) or shrank (requires local filter only)
+  const didTagsExpand = (oldTags, newTags) => {
+    for (const cat in newTags) {
+      for (const key in newTags[cat]) {
+        if (newTags[cat][key] && (!oldTags[cat] || !oldTags[cat][key])) return true; 
+      }
+    }
+    return false;
+  };
+
+ // SMART SAVE: Pushes draft to live, selectively wipes cache
   const saveOsmTags = () => {
+    const expanded = didTagsExpand(osmTags, draftOsmTags);
+    if (expanded) {
+      console.log("[Landmarks] Tags expanded. Wiping local chunk cache to force re-fetch.");
+      
+      // 1. Wipe the background storage cache
+      loadedChunksRef.current.clear();
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('osm_chunk_')) localStorage.removeItem(key);
+      });
+      
+      // 2. THE FIX: Wipe the live map memory so old "All" data disappears instantly!
+      setNearbyLandmarks([]); 
+
+      // 3. Force a fresh re-fetch
+      setLandmarkSearchTrigger(prev => prev + 1); 
+    }
+    
     setOsmTags(draftOsmTags);
-    alert("Map tags saved and updated!");
+    alert(expanded ? "Map tags saved! Fetching new landmarks..." : "Map tags saved locally!");
   };
 
   // NEW: Master reset back to defaults
