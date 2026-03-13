@@ -413,30 +413,40 @@ const startAppTracking = async () => {
     };
   }, [gpsActive, isLocating, appStarted]);
 
-  // 3. Watch Compass Heading
+  // 3. Watch Compass Heading (Optimized to prevent flickering)
   useEffect(() => {
     const handleOrientation = (event) => {
       let compassHeading = null;
-      if (event.webkitCompassHeading) compassHeading = event.webkitCompassHeading;
-      else if (event.alpha !== null) compassHeading = 360 - event.alpha;
-      
-      if (compassHeading !== null) setHeading(compassHeading);
+
+      // 1. Try iOS specific heading
+      if (event.webkitCompassHeading) {
+        compassHeading = event.webkitCompassHeading;
+      } 
+      // 2. Try Absolute Orientation (Standard Android/Web)
+      else if (event.absolute === true && event.alpha !== null) {
+        compassHeading = 360 - event.alpha;
+      }
+      // 3. Fallback to standard alpha (only if we don't have absolute yet)
+      else if (event.alpha !== null) {
+        compassHeading = 360 - event.alpha;
+      }
+
+      if (compassHeading !== null) {
+        // Rounding to whole numbers reduces "micro-flickering" from sensor noise
+        setHeading(Math.round(compassHeading));
+      }
     };
 
-    // CHECK FOR IOS GESTURE REQUIREMENT
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      // This is an iPhone. We MUST wait for a button click.
       setNeedsCompassPermission(true);
-    } else if (window.DeviceOrientationEvent) {
-      // This is Android or standard web. No button click needed!
-      window.addEventListener('deviceorientationabsolute', handleOrientation);
-      window.addEventListener('deviceorientation', handleOrientation);
+    } else {
+      // Use 'deviceorientationabsolute' for Android (fixes the North flip bug)
+      // Use 'deviceorientation' for others/iOS fallback
+      const eventName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+      window.addEventListener(eventName, handleOrientation);
+      
+      return () => window.removeEventListener(eventName, handleOrientation);
     }
-
-    return () => {
-      window.removeEventListener('deviceorientationabsolute', handleOrientation);
-      window.removeEventListener('deviceorientation', handleOrientation);
-    };
   }, []);
 
   // 4. Update Marker Rotation (The Flashlight Effect)
