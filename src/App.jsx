@@ -419,8 +419,8 @@ const startAppTracking = async () => {
       if (!canvas || !map || !pathRef.current || pathRef.current.length === 0) return;
 
       const ctx = canvas.getContext('2d');
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      // THE FIX: Size the canvas exactly to its parent HTML wrapper
+      const size = map.getSize(); canvas.width = size.x; canvas.height = size.y;
 
       ctx.globalCompositeOperation = 'source-over';
       ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
@@ -1084,7 +1084,7 @@ const startAppTracking = async () => {
 
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-slate-900 font-sans">
+    <div className="relative w-full h-[100dvh] overflow-hidden bg-slate-900 font-sans">
       {justCollected && (
         <div className="absolute top-20 left-1/2 -translate-x-1/2 z-50 animate-bounce pointer-events-none">
           <div className="bg-yellow-400 text-slate-900 font-bold px-6 py-3 rounded-full shadow-[0_0_30px_rgba(250,204,21,0.5)] flex items-center gap-2 border-2 border-yellow-200">

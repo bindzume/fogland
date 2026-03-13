@@ -12,7 +12,8 @@ export default function BottomControls({
   isSearching
 }) {
   return (
-    <div className="absolute bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-4 right-4 z-20 flex justify-between items-end pointer-events-none">
+    // CHANGED: Anchored to bottom-0, spread across the width, with thick padding applied upward
+    <div className="absolute bottom-0 left-0 right-0 z-20 px-4 pb-[max(2.5rem,calc(env(safe-area-inset-bottom)+1rem))] flex justify-between items-end pointer-events-none">
       <div className="pointer-events-auto bg-white/95 backdrop-blur-xl p-3 rounded-3xl shadow-2xl border border-slate-100 flex flex-col gap-2">
         <button onClick={onSearchLandmarks} disabled={isSearching} className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl font-semibold transition-all active:scale-95 ${isSearching ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/30' : 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'}`}>
           <Search size={18} className={isSearching ? "animate-spin" : ""} /> {isSearching ? "Searching…" : "Search Area"}
