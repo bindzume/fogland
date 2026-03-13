@@ -183,7 +183,7 @@ export default function App() {
   const [permissionState, setPermissionState] = useState('checking'); // 'checking', 'prompt', 'granted', 'denied'
 
   const [needsCompassPermission, setNeedsCompassPermission] = useState(false);
-  const [sensorsBlocked, setSensorsBlocked] = useState(false);
+
   // Core App States
   const [showTeleportModal, setShowTeleportModal] = useState(false);
   const [teleportQuery, setTeleportQuery] = useState('');
@@ -413,52 +413,39 @@ const startAppTracking = async () => {
     };
   }, [gpsActive, isLocating, appStarted]);
 
-// 3. Watch Compass Heading (With Android Block Detection)
+  // 3. Watch Compass Heading (Optimized to prevent flickering)
   useEffect(() => {
     const handleOrientation = (event) => {
       let compassHeading = null;
-      if (event.webkitCompassHeading) compassHeading = event.webkitCompassHeading;
-      else if (event.alpha !== null) compassHeading = 360 - event.alpha;
-      
-      if (compassHeading !== null) {
-        setHeading(Math.round(compassHeading));
-        setSensorsBlocked(false); // We are getting data, so it's not blocked!
-      }
-    };
 
-    // --- ANDROID / CHROME PERMISSION CHECK ---
-    const checkAndroidPermissions = async () => {
-      if (navigator.permissions && navigator.permissions.query) {
-        try {
-          // Chrome bundles Compass under the 'accelerometer' or 'magnetometer' permission
-          const result = await navigator.permissions.query({ name: 'accelerometer' });
-          if (result.state === 'denied') {
-            setSensorsBlocked(true);
-          }
-          result.onchange = () => {
-            if (result.state === 'denied') setSensorsBlocked(true);
-          };
-        } catch (e) { /* Permission query not supported */ }
+      // 1. Try iOS specific heading
+      if (event.webkitCompassHeading) {
+        compassHeading = event.webkitCompassHeading;
+      } 
+      // 2. Try Absolute Orientation (Standard Android/Web)
+      else if (event.absolute === true && event.alpha !== null) {
+        compassHeading = 360 - event.alpha;
+      }
+      // 3. Fallback to standard alpha (only if we don't have absolute yet)
+      else if (event.alpha !== null) {
+        compassHeading = 360 - event.alpha;
+      }
+
+      if (compassHeading !== null) {
+        // Rounding to whole numbers reduces "micro-flickering" from sensor noise
+        setHeading(Math.round(compassHeading));
       }
     };
 
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      // iOS logic remains the same
       setNeedsCompassPermission(true);
     } else {
-      checkAndroidPermissions();
+      // Use 'deviceorientationabsolute' for Android (fixes the North flip bug)
+      // Use 'deviceorientation' for others/iOS fallback
       const eventName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
       window.addEventListener(eventName, handleOrientation);
       
-      // Safety Timeout: If 2 seconds pass and we have no heading, show the warning
-      const timer = setTimeout(() => {
-        if (heading === 0) setSensorsBlocked(true);
-      }, 2000);
-
-      return () => {
-        window.removeEventListener(eventName, handleOrientation);
-        clearTimeout(timer);
-      };
+      return () => window.removeEventListener(eventName, handleOrientation);
     }
   }, []);
 
