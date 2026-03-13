@@ -7,6 +7,10 @@ import BottomControls from './components/BottomControls';
 import TeleportModal from './components/TeleportModal';
 import ProfileOverlay from './components/ProfileOverlay';
 
+import { Capacitor, registerPlugin } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+
 const BASE_ZOOM = 16;
 const STEP_SIZE = 0.00015; 
 const ERASER_WIDTH_KM = 0.020;
@@ -15,8 +19,8 @@ const VIEW_HALF_SIZE = 0.01;
 const CELL_SIZE = 0.0005; 
 const MIN_EXPLORE_PERCENT = 0.05
 
-const FALLBACK_LAT = 37.7799;
-const FALLBACK_LNG = -121.9780;
+const FALLBACK_LAT = 37.3918;
+const FALLBACK_LNG = -121.9822;
 
 const DEFAULT_OSM_TAGS = {
   tourism: { all:false, museum: true, attraction: true, viewpoint: true, gallery: true, artwork: true, zoo: true, aquarium: true, yes: true },
@@ -309,41 +313,100 @@ const startAppTracking = async () => {
     }
   };
 
-  // 2. Watch Real GPS (With Anti-Drift Threshold)
+  // 2. Watch Real GPS (Hybrid: Native Background vs. Web Foreground)
   useEffect(() => {
     if (!gpsActive || isLocating || !appStarted) {
-      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+      // Safely cleanup whichever watcher was running
+      if (watchIdRef.current) {
+        if (Capacitor.isNativePlatform()) {
+          BackgroundGeolocation.removeWatcher({ id: watchIdRef.current });
+        } else {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+        }
+        watchIdRef.current = null;
+      }
       return;
     }
-    
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      (position) => {
-        const newLat = position.coords.latitude;
-        const newLng = position.coords.longitude;
 
-        // Anti-Jitter: Calculate distance from the last time we updated the map
-        if (lastReportedPosRef.current) {
-          const distKm = getDistanceKm(
-            lastReportedPosRef.current[0], lastReportedPosRef.current[1],
-            newLat, newLng
-          );
-          
-          // 0.005 km = 5 meters. If we moved less than 5m, ignore the micro-drift!
-          if (distKm < 0.005) {
-            return; 
+    if (Capacitor.isNativePlatform()) {
+      // ==========================================
+      // 📱 NATIVE APP LOGIC (Android Background)
+      // ==========================================
+      LocalNotifications.requestPermissions(); // Ensure we can send discovery alerts
+      
+      BackgroundGeolocation.addWatcher(
+        {
+          backgroundMessage: "Cancel to prevent battery drain.",
+          backgroundTitle: "Fog World is tracking your path.",
+          requestPermissions: true,
+          stale: false,
+          distanceFilter: 5 // Native hardware anti-drift (meters)
+        },
+        (location, error) => {
+          if (error) {
+            console.warn("Background location error", error);
+            if (error.code === "NOT_AUTHORIZED") setGpsActive(false);
+            return;
           }
-        }
 
-        // If we made it here, it's a real movement. Save it and update the map!
-        lastReportedPosRef.current = [newLat, newLng];
-        handleNewLocation([newLat, newLng]);
-      },
-      (error) => console.warn("GPS Watch error:", error),
-      // Tweaked settings to prevent hardware exhaustion
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 5000 } 
-    );
-    
-    return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
+          const newLat = location.latitude;
+          const newLng = location.longitude;
+
+          // Double check drift
+          if (lastReportedPosRef.current) {
+            const distKm = getDistanceKm(lastReportedPosRef.current[0], lastReportedPosRef.current[1], newLat, newLng);
+            if (distKm < 0.005) return; 
+          }
+
+          lastReportedPosRef.current = [newLat, newLng];
+          handleNewLocation([newLat, newLng]);
+        }
+      ).then((watcherId) => { watchIdRef.current = watcherId; });
+
+    } else {
+      // ==========================================
+      // 🌐 WEB BROWSER LOGIC (iOS Web / Desktop)
+      // ==========================================
+      if (!navigator.geolocation) {
+        console.warn("Geolocation not supported by this browser.");
+        setGpsActive(false);
+        return;
+      }
+
+      const id = navigator.geolocation.watchPosition(
+        (pos) => {
+          const newLat = pos.coords.latitude;
+          const newLng = pos.coords.longitude;
+
+          // Manual Web Anti-Drift Math
+          if (lastReportedPosRef.current) {
+            const distKm = getDistanceKm(lastReportedPosRef.current[0], lastReportedPosRef.current[1], newLat, newLng);
+            if (distKm < 0.005) return; 
+          }
+
+          lastReportedPosRef.current = [newLat, newLng];
+          handleNewLocation([newLat, newLng]);
+        },
+        (err) => {
+          console.warn("Web GPS Error:", err);
+          setGpsActive(false);
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      );
+      watchIdRef.current = id;
+    }
+
+    // Universal Cleanup when unmounting
+    return () => { 
+      if (watchIdRef.current) {
+        if (Capacitor.isNativePlatform()) {
+          BackgroundGeolocation.removeWatcher({ id: watchIdRef.current });
+        } else {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+        }
+        watchIdRef.current = null;
+      }
+    };
   }, [gpsActive, isLocating, appStarted]);
 
 
@@ -750,6 +813,27 @@ const startAppTracking = async () => {
         
         setJustCollected(lm.name); 
         setTimeout(() => setJustCollected(null), 4000);
+
+        // ==========================================
+        // 🔔 NEW: NATIVE BACKGROUND NOTIFICATION
+        // ==========================================
+        if (Capacitor.isNativePlatform()) {
+          LocalNotifications.schedule({
+            notifications: [
+              {
+                title: "🌟 Landmark Discovered!",
+                body: `You found: ${lm.name} (${lm.specificType || 'Landmark'})`,
+                id: new Date().getTime() + Math.floor(Math.random() * 10000), 
+                schedule: { at: new Date(Date.now() + 100) },
+                sound: null,
+                attachments: null,
+                actionTypeId: "",
+                extra: null
+              }
+            ]
+          }).catch(err => console.error("Notification Error:", err));
+        }
+        // ==========================================
 
         try {
           const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lm.lat}&lon=${lm.lon}&format=json`);
