@@ -1,3 +1,4 @@
+![fogland](https://files.catbox.moe/fl3252.png)
 # What's this?
 
 I saw an ad for Fog of War on twitter and thought it was cool. Then I saw it was $30
