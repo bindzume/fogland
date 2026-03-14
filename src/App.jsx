@@ -9,6 +9,9 @@ import ProfileOverlay from './components/ProfileOverlay';
 
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { LocalNotifications } from '@capacitor/local-notifications';
+
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 const BASE_ZOOM = 16;
@@ -1028,11 +1031,46 @@ const startAppTracking = async () => {
     drawFog(); setShowConfirmWipe(false); setShowProfile(false);
   };
 
-  const handleExport = () => {
+const handleExport = async () => {
+    // Gather your specific state variables
     const data = { path: pathRef.current, collected: collectedLandmarks };
-    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `fog-world-${new Date().toISOString().split('T')[0]}.json`; a.click(); URL.revokeObjectURL(url);
+    const backupString = JSON.stringify(data);
+    const fileName = `fog-world-${new Date().toISOString().split('T')[0]}.json`;
+
+    if (Capacitor.isNativePlatform()) {
+      // ==========================================
+      // 📱 NATIVE ANDROID EXPORT (Uses Share Sheet)
+      // ==========================================
+      try {
+        const writeResult = await Filesystem.writeFile({
+          path: fileName,
+          data: backupString,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8
+        });
+
+        await Share.share({
+          title: 'Fog World Backup',
+          text: 'Here is your Fog World save data.',
+          url: writeResult.uri, 
+          dialogTitle: 'Save Backup File'
+        });
+      } catch (error) {
+        console.error("Native export failed:", error);
+        alert("Failed to create backup file on device.");
+      }
+    } else {
+      // ==========================================
+      // 🌐 STANDARD WEB EXPORT (Your exact code)
+      // ==========================================
+      const blob = new Blob([backupString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); 
+      a.href = url; 
+      a.download = fileName; 
+      a.click(); 
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleImport = (e) => {
