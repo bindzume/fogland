@@ -18,5 +18,9 @@ Go to android studio and do what needs to be done.
 Also works on browser so itoddlers can use it. You just need to host it on your server (or a virtual machine i guess)
 Then just connect to it via browser. (make sure you do https or else phones throw a hissy-fit about permissions)
 
-Here is my vercel version
+# Try it out
+Here is my vercel version. It's all local so your information is safe don't worry. The web version doesn't allow for background location tracking but the native app does (on android).
+
+Make sure you allow location and sensors for the website in your browser.
+
 https://fogland.vercel.app/
