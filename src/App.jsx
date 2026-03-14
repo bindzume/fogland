@@ -336,36 +336,51 @@ const startAppTracking = async () => {
       // ==========================================
       // 📱 NATIVE APP LOGIC (Android Background)
       // ==========================================
-      LocalNotifications.requestPermissions(); // Ensure we can send discovery alerts
       
-      BackgroundGeolocation.addWatcher(
-        {
-          backgroundMessage: "Cancel to prevent battery drain.",
-          backgroundTitle: "Fog World is tracking your path.",
-          requestPermissions: true,
-          stale: false,
-          distanceFilter: 5 // Native hardware anti-drift (meters)
-        },
-        (location, error) => {
-          if (error) {
-            console.warn("Background location error", error);
-            if (error.code === "NOT_AUTHORIZED") setGpsActive(false);
-            return;
-          }
+      const startNativeTracking = async () => {
+        try {
+          // 1. AWAIT the notification permission (Crucial for Android 13+)
+          await LocalNotifications.requestPermissions(); 
+          
+          // 2. Start the watcher ONLY after permissions are resolved
+          const watcherId = await BackgroundGeolocation.addWatcher(
+            {
+              backgroundMessage: "Cancel to prevent battery drain.",
+              backgroundTitle: "Fog World is tracking your path.",
+              requestPermissions: true,
+              stale: false,
+              distanceFilter: 5 
+            },
+            (location, error) => {
+              if (error) {
+                console.warn("Background location error", error);
+                if (error.code === "NOT_AUTHORIZED") setGpsActive(false);
+                return;
+              }
 
-          const newLat = location.latitude;
-          const newLng = location.longitude;
+              const newLat = location.latitude;
+              const newLng = location.longitude;
 
-          // Double check drift
-          if (lastReportedPosRef.current) {
-            const distKm = getDistanceKm(lastReportedPosRef.current[0], lastReportedPosRef.current[1], newLat, newLng);
-            if (distKm < 0.005) return; 
-          }
+              if (lastReportedPosRef.current) {
+                const distKm = getDistanceKm(lastReportedPosRef.current[0], lastReportedPosRef.current[1], newLat, newLng);
+                if (distKm < 0.005) return; 
+              }
 
-          lastReportedPosRef.current = [newLat, newLng];
-          handleNewLocation([newLat, newLng]);
+              lastReportedPosRef.current = [newLat, newLng];
+              handleNewLocation([newLat, newLng]);
+            }
+          );
+          
+          // 3. Save the ID for cleanup
+          watchIdRef.current = watcherId;
+
+        } catch (err) {
+          console.error("Failed to start native tracking:", err);
+          setGpsActive(false);
         }
-      ).then((watcherId) => { watchIdRef.current = watcherId; });
+      };
+
+      startNativeTracking();
 
     } else {
       // ==========================================
