@@ -16,3 +16,6 @@ Go to android studio and do what needs to be done.
 
 Also works on browser so itoddlers can use it. You just need to host it on your server (or a virtual machine i guess)
 Then just connect to it via browser. (make sure you do https or else phones throw a hissy-fit about permissions)
+
+Here is my vercel version
+https://fogland.vercel.app/
