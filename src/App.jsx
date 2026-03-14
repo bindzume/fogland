@@ -184,6 +184,10 @@ export default function App() {
 
   const [needsCompassPermission, setNeedsCompassPermission] = useState(false);
 
+  // Add this near your other state variables (around line 70)
+  const [allowBackground, setAllowBackground] = useState(false); // Default to foreground-only
+  const isNativeWatcherRef = useRef(false); // Safely tracks which cleanup to run
+  
   // Core App States
   const [showTeleportModal, setShowTeleportModal] = useState(false);
   const [teleportQuery, setTeleportQuery] = useState('');
@@ -317,32 +321,36 @@ const startAppTracking = async () => {
     }
   };
 
-  // 2. Watch Real GPS (Hybrid: Native Background vs. Web Foreground)
+  
+
+// 2. Watch Real GPS (Hybrid: Native Background vs. Web Foreground)
   useEffect(() => {
-    if (!gpsActive || isLocating || !appStarted) {
-      // Safely cleanup whichever watcher was running
+    // Universal internal cleanup function
+    const cleanupCurrentWatcher = () => {
       if (watchIdRef.current) {
-        if (Capacitor.isNativePlatform()) {
+        if (isNativeWatcherRef.current) {
           BackgroundGeolocation.removeWatcher({ id: watchIdRef.current });
         } else {
           navigator.geolocation.clearWatch(watchIdRef.current);
         }
         watchIdRef.current = null;
       }
+    };
+
+    if (!gpsActive || isLocating || !appStarted) {
+      cleanupCurrentWatcher();
       return;
     }
 
-    if (Capacitor.isNativePlatform()) {
+    // Toggle determines if we use Native Background OR standard Web Foreground
+    if (Capacitor.isNativePlatform() && allowBackground) {
       // ==========================================
-      // 📱 NATIVE APP LOGIC (Android Background)
+      // 📱 NATIVE APP LOGIC (Pocket Tracking ON)
       // ==========================================
-      
       const startNativeTracking = async () => {
         try {
-          // 1. AWAIT the notification permission (Crucial for Android 13+)
           await LocalNotifications.requestPermissions(); 
           
-          // 2. Start the watcher ONLY after permissions are resolved
           const watcherId = await BackgroundGeolocation.addWatcher(
             {
               backgroundMessage: "Cancel to prevent battery drain.",
@@ -357,7 +365,6 @@ const startAppTracking = async () => {
                 if (error.code === "NOT_AUTHORIZED") setGpsActive(false);
                 return;
               }
-
               const newLat = location.latitude;
               const newLng = location.longitude;
 
@@ -371,20 +378,18 @@ const startAppTracking = async () => {
             }
           );
           
-          // 3. Save the ID for cleanup
+          isNativeWatcherRef.current = true;
           watchIdRef.current = watcherId;
-
         } catch (err) {
           console.error("Failed to start native tracking:", err);
           setGpsActive(false);
         }
       };
-
       startNativeTracking();
 
     } else {
       // ==========================================
-      // 🌐 WEB BROWSER LOGIC (iOS Web / Desktop)
+      // 🌐 WEB BROWSER LOGIC (Pocket Tracking OFF)
       // ==========================================
       if (!navigator.geolocation) {
         console.warn("Geolocation not supported by this browser.");
@@ -397,7 +402,6 @@ const startAppTracking = async () => {
           const newLat = pos.coords.latitude;
           const newLng = pos.coords.longitude;
 
-          // Manual Web Anti-Drift Math
           if (lastReportedPosRef.current) {
             const distKm = getDistanceKm(lastReportedPosRef.current[0], lastReportedPosRef.current[1], newLat, newLng);
             if (distKm < 0.005) return; 
@@ -412,21 +416,15 @@ const startAppTracking = async () => {
         },
         { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
       );
+      
+      isNativeWatcherRef.current = false;
       watchIdRef.current = id;
     }
 
-    // Universal Cleanup when unmounting
-    return () => { 
-      if (watchIdRef.current) {
-        if (Capacitor.isNativePlatform()) {
-          BackgroundGeolocation.removeWatcher({ id: watchIdRef.current });
-        } else {
-          navigator.geolocation.clearWatch(watchIdRef.current);
-        }
-        watchIdRef.current = null;
-      }
-    };
-  }, [gpsActive, isLocating, appStarted]);
+    // Cleanup when component unmounts OR when toggle changes
+    return cleanupCurrentWatcher;
+    
+  }, [gpsActive, isLocating, appStarted, allowBackground]); // <-- Added allowBackground as dependency
 
   // 3. Watch Compass Heading (Optimized to prevent flickering)
   useEffect(() => {
@@ -1273,9 +1271,20 @@ const startAppTracking = async () => {
             }
             setIsTracking(true);
           }}
-          className="absolute bottom-32 right-4 z-20 bg-blue-600 text-white p-4 rounded-full shadow-[0_0_15px_rgba(0,0,0,0.3)] transition-all active:scale-90"
+          className="absolute bottom-40 right-4 z-20 bg-blue-600 text-white p-4 rounded-full shadow-[0_0_15px_rgba(0,0,0,0.3)] transition-all active:scale-90"
         >
           <Navigation size={24} />
+        </button>
+      )}
+
+      {/* NEW: Background Tracking Toggle (Only shows on Native Android/iOS) */}
+      {appStarted && Capacitor.isNativePlatform() && (
+        <button
+          onClick={() => setAllowBackground(!allowBackground)}
+          className="absolute bottom-20 right-4 z-20 bg-slate-800/90 text-white p-3 rounded-full shadow-[0_0_15px_rgba(0,0,0,0.3)] flex items-center gap-3 border border-slate-600 transition-all active:scale-95 backdrop-blur-md"
+        >
+          <div className={`w-3 h-3 rounded-full transition-colors ${allowBackground ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-slate-500'}`} />
+          <span className="text-sm font-bold pr-1">{allowBackground ? 'Background ON' : 'Background OFF'}</span>
         </button>
       )}
       <BottomControls
