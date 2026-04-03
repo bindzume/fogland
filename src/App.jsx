@@ -20,7 +20,7 @@ const ERASER_WIDTH_KM = 0.020;
 const COLLECTION_RADIUS_KM = 0.015; 
 const VIEW_HALF_SIZE = 0.01; 
 const CELL_SIZE = 0.0005; 
-const MIN_EXPLORE_PERCENT = 0.05
+const MIN_EXPLORE_PERCENT = 0.1
 
 const FALLBACK_LAT = 37.3918;
 const FALLBACK_LNG = -121.9822;
@@ -1024,12 +1024,41 @@ const startAppTracking = async () => {
   };
 
   const executeClearData = () => {
-    pathRef.current = currentPos && Array.isArray(currentPos) ? [currentPos] : [];
-    visitedCellsRef.current = new Set();
-    localStorage.removeItem('fogWorldLivePath'); localStorage.removeItem('fogWorldCollected');
-    setCollectedLandmarks([]); collectedLandmarksRef.current = [];
-    drawFog(); setShowConfirmWipe(false); setShowProfile(false);
-  };
+  // 1. Reset user path and visited cells (Your existing code)
+  pathRef.current = currentPos && Array.isArray(currentPos) ? [currentPos] : [];
+  visitedCellsRef.current = new Set();
+
+  // 2. NEW: Dynamically wipe all cached landmark chunks from localStorage
+  // Since OSM chunks usually have dynamic names (like 'osm_chunk_x_y'), 
+  // we must loop through and delete everything related to the app.
+  const keysToRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    // Change 'fogWorld' or 'osm_' to whatever prefix you use for chunk caching
+    if (key && (key.startsWith('fogWorld') || key.startsWith('osm_') || key.startsWith('landmark_'))) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach(key => localStorage.removeItem(key));
+
+  // 3. Reset React States (Your existing + New additions)
+  setCollectedLandmarks([]); 
+  collectedLandmarksRef.current = [];
+  
+  // NEW: You MUST clear the state holding the active map markers!
+  // Assuming your state is called setNearbyLandmarks or setLandmarks:
+  if (typeof setNearbyLandmarks === 'function') {
+    setNearbyLandmarks([]); 
+  }
+  if (typeof setGeoData === 'function') {
+    setGeoData(null); 
+  }
+
+  // 4. Update UI
+  drawFog(); 
+  setShowConfirmWipe(false); 
+  setShowProfile(false);
+};
 
 const handleExport = async () => {
     // Gather your specific state variables
