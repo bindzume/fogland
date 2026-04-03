@@ -840,9 +840,10 @@ const startAppTracking = async () => {
 
             return {
               id: e.id, name: e.tags.name, lat: computedLat, lon: computedLon,
-              type: isBoundaryType ? 'park/boundary' : 'point', specificType, 
-              description: e.tags.description || null, wikipedia: wikiLink, 
+              type: isBoundaryType ? 'park/boundary' : 'point', specificType,
+              description: e.tags.description || null, wikipedia: wikiLink,
               isBoundary, bounds: e.bounds, progressCount, requiredCells,
+              osmTags: e.tags, // Store raw OSM tags for client-side filtering
             };
           })
           .filter(e => e.lat != null && e.lon != null);
@@ -1216,37 +1217,68 @@ const handleExport = async () => {
     return true;
   };
 
+// Check if a landmark matches the active tag filters
+  const doesLandmarkMatchTags = (landmark, activeTags) => {
+    if (!landmark.osmTags) return true; // Legacy landmarks without OSM tags - keep them
+
+    // Check each OSM tag on the landmark
+    for (const category in landmark.osmTags) {
+      if (!activeTags[category]) continue; // This category isn't in our filter at all
+
+      const tagValue = landmark.osmTags[category];
+      const categoryFilters = activeTags[category];
+
+      // If "all" is enabled for this category, match everything
+      if (categoryFilters.all) return true;
+
+      // Check if this specific value is enabled
+      if (categoryFilters[tagValue]) return true;
+    }
+
+    return false; // No matches found
+  };
+
 // NEW: Check if tags expanded (requires fetch) or shrank (requires local filter only)
   const didTagsExpand = (oldTags, newTags) => {
     for (const cat in newTags) {
       for (const key in newTags[cat]) {
-        if (newTags[cat][key] && (!oldTags[cat] || !oldTags[cat][key])) return true; 
+        if (newTags[cat][key] && (!oldTags[cat] || !oldTags[cat][key])) return true;
       }
     }
     return false;
   };
 
- // SMART SAVE: Pushes draft to live, selectively wipes cache
+ // SMART SAVE: Pushes draft to live, selectively wipes cache or filters
   const saveOsmTags = () => {
     const expanded = didTagsExpand(osmTags, draftOsmTags);
+
     if (expanded) {
       console.log("[Landmarks] Tags expanded. Wiping local chunk cache to force re-fetch.");
-      
+
       // 1. Wipe the background storage cache
       loadedChunksRef.current.clear();
       Object.keys(localStorage).forEach(key => {
         if (key.startsWith('osm_chunk_')) localStorage.removeItem(key);
       });
-      
-      // 2. THE FIX: Wipe the live map memory so old "All" data disappears instantly!
-      setNearbyLandmarks([]); 
+
+      // 2. Wipe the live map memory so old "All" data disappears instantly
+      setNearbyLandmarks([]);
 
       // 3. Force a fresh re-fetch
-      setLandmarkSearchTrigger(prev => prev + 1); 
+      setLandmarkSearchTrigger(prev => prev + 1);
+    } else {
+      console.log("[Landmarks] Tags reduced or unchanged. Filtering existing landmarks client-side.");
+
+      // Filter existing landmarks to match new tag selection
+      setNearbyLandmarks(prev => {
+        const filtered = prev.filter(lm => doesLandmarkMatchTags(lm, draftOsmTags));
+        console.log(`[Landmarks] Filtered: ${prev.length} → ${filtered.length} landmarks`);
+        return filtered;
+      });
     }
-    
+
     setOsmTags(draftOsmTags);
-    alert(expanded ? "Map tags saved! Fetching new landmarks..." : "Map tags saved locally!");
+    alert(expanded ? "Map tags saved! Fetching new landmarks..." : "Map tags saved! Filtered existing landmarks.");
   };
 
   // NEW: Master reset back to defaults
